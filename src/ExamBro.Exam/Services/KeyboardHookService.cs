@@ -27,7 +27,12 @@ public class KeyboardHookService : IDisposable
     private bool _exitNeedsCtrl;
     private bool _exitNeedsShift;
     private bool _exitNeedsAlt;
-    private uint _exitVkCode;
+    private readonly List<uint> _exitVkCodes = new();
+
+    // Key chord tracker for combinations like Ctrl + C + B
+    private uint _lastChordVk;
+    private long _lastChordTimestamp;
+    private const long ChordWindowMs = 750;
 
     // ── Win32 P/Invoke Declarations ──────────────────────────────────────────
 
@@ -377,14 +382,14 @@ public class KeyboardHookService : IDisposable
     {
         if (string.IsNullOrWhiteSpace(shortcut))
         {
-            shortcut = "Ctrl+Shift+Q";
+            shortcut = ExamBro.Core.Constants.DefaultExitShortcut;
         }
 
         var parts = shortcut.Split('+', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         _exitNeedsCtrl = false;
         _exitNeedsShift = false;
         _exitNeedsAlt = false;
-        _exitVkCode = 0x51; // default 'Q'
+        _exitVkCodes.Clear();
 
         foreach (var p in parts)
         {
@@ -402,25 +407,32 @@ public class KeyboardHookService : IDisposable
             }
             else
             {
-                // Key name, e.g. "Q", "F10", etc.
                 if (p.Length == 1)
                 {
-                    _exitVkCode = (uint)char.ToUpperInvariant(p[0]);
+                    _exitVkCodes.Add((uint)char.ToUpperInvariant(p[0]));
                 }
                 else if (p.StartsWith("F", StringComparison.OrdinalIgnoreCase) && int.TryParse(p[1..], out int fNum) && fNum is >= 1 and <= 12)
                 {
-                    _exitVkCode = (uint)(0x70 + (fNum - 1));
+                    _exitVkCodes.Add((uint)(0x70 + (fNum - 1)));
                 }
             }
         }
 
-        Log.Information("Configured Exit Shortcut: {Shortcut} (Ctrl={Ctrl}, Shift={Shift}, Alt={Alt}, VK=0x{Vk:X2})",
-            shortcut, _exitNeedsCtrl, _exitNeedsShift, _exitNeedsAlt, _exitVkCode);
+        if (_exitVkCodes.Count == 0)
+        {
+            _exitNeedsCtrl = true;
+            _exitVkCodes.Add(0x43); // 'C'
+            _exitVkCodes.Add(0x42); // 'B'
+        }
+
+        Log.Information("Configured Exit Shortcut: {Shortcut} (Ctrl={Ctrl}, Shift={Shift}, Alt={Alt}, Keys={Keys})",
+            shortcut, _exitNeedsCtrl, _exitNeedsShift, _exitNeedsAlt,
+            string.Join("+", _exitVkCodes.Select(k => $"0x{k:X2}")));
     }
 
     private bool CheckExitShortcut(uint vkCode, bool ctrlDown, bool shiftDown, bool altDown)
     {
-        if (vkCode != _exitVkCode) return false;
+        // Check modifier keys
         if (_exitNeedsCtrl && !ctrlDown) return false;
         if (!_exitNeedsCtrl && ctrlDown) return false;
         if (_exitNeedsShift && !shiftDown) return false;
@@ -428,7 +440,52 @@ public class KeyboardHookService : IDisposable
         if (_exitNeedsAlt && !altDown) return false;
         if (!_exitNeedsAlt && altDown) return false;
 
-        return true;
+        // Single-key combination (e.g. Ctrl+Shift+Q or F10)
+        if (_exitVkCodes.Count == 1)
+        {
+            return vkCode == _exitVkCodes[0];
+        }
+
+        // Multi-key chord combination (e.g. Ctrl + C + B)
+        if (_exitVkCodes.Count > 1)
+        {
+            if (!_exitVkCodes.Contains(vkCode))
+            {
+                return false;
+            }
+
+            // Check if all other keys in the chord are currently held down
+            bool allOtherKeysDown = true;
+            foreach (uint k in _exitVkCodes)
+            {
+                if (k != vkCode && !IsKeyDown((int)k))
+                {
+                    allOtherKeysDown = false;
+                    break;
+                }
+            }
+
+            if (allOtherKeysDown)
+            {
+                _lastChordVk = 0;
+                return true;
+            }
+
+            // Rapid chord window: user pressed the keys in quick succession while holding Ctrl
+            long now = Stopwatch.GetTimestamp();
+            long elapsedMs = (now - _lastChordTimestamp) * 1000 / Stopwatch.Frequency;
+
+            if (_lastChordVk != 0 && _lastChordVk != vkCode && _exitVkCodes.Contains(_lastChordVk) && elapsedMs <= ChordWindowMs)
+            {
+                _lastChordVk = 0;
+                return true;
+            }
+
+            _lastChordVk = vkCode;
+            _lastChordTimestamp = now;
+        }
+
+        return false;
     }
 
     // ── IDisposable ──────────────────────────────────────────────────────────

@@ -68,7 +68,7 @@ public sealed class WebhookSink : ILogEventSink, IDisposable
             }
             catch
             {
-                // Swallow — webhook failures must never crash the exam session
+                // Swallow: webhook failures must never crash the exam session
             }
         });
     }

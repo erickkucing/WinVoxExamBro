@@ -72,6 +72,7 @@ public partial class PreFlightDialog : Window
     {
         _checks.Clear();
 
+        var itemAdmin = new PreFlightCheckItem { Title = "Hak Akses Administrator", Details = "Memeriksa izin penuh sistem...", IsCritical = true };
         var itemNetwork = new PreFlightCheckItem { Title = "Koneksi Jaringan", Details = "Memeriksa status sambungan internet..." };
         var itemVm = new PreFlightCheckItem { Title = "Lingkungan Mesin Virtual (VM)", Details = "Mendeteksi tanda-tanda virtualisasi...", IsCritical = _config.Security.BlockVirtualMachine && !_isDevSafe };
         var itemRdp = new PreFlightCheckItem { Title = "Sesi Remote Desktop (RDP)", Details = "Memeriksa koneksi jarak jauh...", IsCritical = _config.Security.BlockRemoteSession && !_isDevSafe };
@@ -79,6 +80,7 @@ public partial class PreFlightDialog : Window
         var itemProcess = new PreFlightCheckItem { Title = "Aplikasi Terlarang", Details = "Memindai proses yang sedang berjalan...", IsCritical = true };
         var itemMonitors = new PreFlightCheckItem { Title = "Konfigurasi Monitor", Details = "Memeriksa jumlah tampilan layar aktif...", IsCritical = _config.Security.MultiMonitor == MultiMonitorPolicy.Block };
 
+        _checks.Add(itemAdmin);
         _checks.Add(itemNetwork);
         _checks.Add(itemVm);
         _checks.Add(itemRdp);
@@ -88,8 +90,21 @@ public partial class PreFlightDialog : Window
 
         bool allPassed = true;
 
-        // 1. Network Check
-        await Task.Delay(200);
+        // 1. Administrator Elevation Check
+        await Task.Delay(100);
+        bool isAdmin = EnvironmentDetector.IsElevatedAdministrator();
+        if (isAdmin)
+        {
+            MarkPassed(itemAdmin, "Berjalan dengan hak penuh Administrator.");
+        }
+        else
+        {
+            MarkFailed(itemAdmin, "Aplikasi wajib dijalankan sebagai Administrator.", isCritical: true);
+            allPassed = false;
+        }
+
+        // 2. Network Check
+        await Task.Delay(150);
         bool netOk = NetworkInterface.GetIsNetworkAvailable();
         if (netOk)
         {

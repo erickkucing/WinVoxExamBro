@@ -31,6 +31,38 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // 0. Enforce Administrator Elevation
+        if (!EnvironmentDetector.IsElevatedAdministrator())
+        {
+            try
+            {
+                var startInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = Environment.ProcessPath ?? System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName ?? "ExamBro.Exam.exe",
+                    UseShellExecute = true,
+                    Verb = "runas"
+                };
+
+                foreach (string arg in e.Args)
+                {
+                    startInfo.ArgumentList.Add(arg);
+                }
+
+                System.Diagnostics.Process.Start(startInfo);
+            }
+            catch
+            {
+                MessageBox.Show(
+                    "ExamBro memerlukan hak akses Administrator penuh untuk mengamankan sistem dan mencegah kecurangan ujian.\n\nSilakan jalankan aplikasi dengan 'Run as administrator'.",
+                    "Hak Akses Administrator Diperlukan",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+
+            Shutdown(1);
+            return;
+        }
+
         // 1. Check for immediate recovery flag (--restore)
         if (e.Args.Any(a => a.Equals("--restore", StringComparison.OrdinalIgnoreCase)))
         {
@@ -80,7 +112,11 @@ public partial class App : Application
 
         // 6. Initialize Serilog Logging
         Serilog.Log.Logger = LoggerSetup.CreateLogger(_config);
-        Serilog.Log.Information("ExamBro application startup. Version: {Version}", Constants.AppVersion);
+        Serilog.Log.Information(
+            "ExamBro application startup. Version: {Version}, PortableMode: {IsPortable}, ConfigPath: {ConfigPath}",
+            Constants.AppVersion,
+            Constants.IsPortableMode,
+            Constants.ConfigFilePath);
 
         // 7. Parse command line arguments & dev-safe mode
         string? urlOverride = null;

@@ -43,7 +43,7 @@ public static class UrlMatcher
         // Handle scheme-less or malformed URLs
         int colonIndex = url.IndexOf(':');
         if (colonIndex <= 0)
-            return false; // no scheme found — let other rules decide
+            return false; // no scheme found, let other rules decide
 
         string scheme = url[..colonIndex].Trim();
         return BlockedSchemes.Contains(scheme);
@@ -51,7 +51,7 @@ public static class UrlMatcher
 
     /// <summary>
     /// Determine whether a URL is allowed given the whitelist and blacklist.
-    /// <para><b>Blacklist always wins</b> — a URL matched by both lists is blocked.</para>
+    /// <para><b>Blacklist always wins</b>: a URL matched by both lists is blocked.</para>
     /// </summary>
     public static bool IsUrlAllowed(
         string url,

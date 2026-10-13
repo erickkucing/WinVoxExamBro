@@ -30,8 +30,9 @@ ExamBro adalah solusi peramban ujian aman (*secure exam browser*) berbasis nativ
 - **Hardening WebView2**: Profil InPrivate terisolasi di `%LocalAppData%\ExamBro\WebView2Profile`, DevTools nonaktif, klik kanan dinonaktifkan, accelerator keys browser dimatikan, download dibatalkan, pembatasan izin perangkat keras (kamera, mikrofon, lokasi), dan error page internal kustom.
 - **Whitelist Navigasi Ketat**: Hanya mengizinkan URL yang cocok dengan pola wildcard yang diizinkan. Pemblokiran skema berbahaya (`file:`, `javascript:`, `view-source:`, dll.). Deteksi Exit URL otomatis untuk menyelesaikan ujian.
 - **Monitoring Lingkungan**: Pemantauan proses terlarang per 1 detik (dengan pengecualian proses internal WebView2), deteksi Virtual Machine (WMI BIOS, MAC OUI, registry, hypervisor CPUID), deteksi Remote Desktop (`SM_REMOTESESSION`), deteksi debugger, dan pemantauan jumlah monitor.
-- **Penyimpanan Terenkripsi AES-256-GCM**: Konfigurasi `%ProgramData%\ExamBro\exambro.cfg` dienkripsi dengan AES-256-GCM menggunakan master key yang dilindungi DPAPI (LocalMachine) + entropy khusus. Setiap perubahan manual pada file akan terdeteksi sebagai modifikasi (*tampering*) dan ditolak.
-- **Keluar Aman & Anti Brute-Force**: Akses keluar hanya via shortcut pengawas (default `Ctrl+Shift+Q`) atau tombol toolbar dengan password pengawas yang diverifikasi menggunakan PBKDF2-HMAC-SHA256 (310.000 iterasi, constant-time compare). Lockout otomatis 30 detik setelah 5 kali salah.
+- **Hak Penuh Administrator**: Klien ujian (`ExamBro.Exam.exe`) dan aplikasi pengaturan (`ExamBro.Config.exe`) berjalan dengan hak akses penuh Administrator (`requireAdministrator`) untuk menjamin penegakan kiosk, pencegahan terminasi paksa, dan kemampuan mematikan proses ilegal berhak tinggi.
+- **Dukungan Mode Portable**: Dapat dijalankan langsung dalam bentuk portable (cukup copy-paste folder atau jalankan dari flashdisk) tanpa perlu instalasi. Membaca berkas `exambro.cfg` lokal di folder aplikasi terlebih dahulu.
+- **Keluar Aman Wajib Kombinasi `Ctrl + C + B` & Password Pengawas**: Keluar dari mode ujian wajib menekan kombinasi `Ctrl + C + B` bersamaan dan memasukkan kata sandi pengawas yang diverifikasi menggunakan PBKDF2-HMAC-SHA256 (310.000 iterasi, constant-time compare). Lockout otomatis 30 detik setelah 5 kali salah.
 
 ---
 
@@ -314,8 +315,9 @@ Jalankan `ExamBro-Setup-v1.0.0.exe` dengan hak Administrator. Installer akan:
 | Area | Keputusan / Asumsi yang Diambil | Alasan Keamanan |
 | :--- | :--- | :--- |
 | **Prioritas Keamanan** | Keamanan > Stabilitas > Fitur Tambahan | Jika ada ambiguitas perilaku, sistem memilih opsi paling ketat untuk mencegah kecurangan. |
-| **Penyimpanan Konfigurasi** | AES-256-GCM + DPAPI (LocalMachine) + AppEntropy | Memastikan file konfigurasi tidak dapat dibaca atau dimodifikasi oleh peserta ujian bahkan jika mereka memiliki akses baca lokal. Tag autentikasi GCM mendeteksi modifikasi 1-bit sekalipun. |
-| **Hak Akses Klien Ujian** | Client `ExamBro.Exam.exe` berjalan dengan hak User standar (non-admin) | Siswa di lab komputer umumnya login sebagai user non-admin. Semua pembatasan kiosk (registry HKCU, hooks) dirancang agar berfungsi optimal tanpa memerlukan hak admin. |
+| **Penyimpanan Konfigurasi** | AES-256-GCM + DPAPI (Installed) & Portable Master Key (Portable) | Memastikan file konfigurasi tidak dapat dibaca atau dimodifikasi oleh peserta ujian. Tag autentikasi GCM mendeteksi modifikasi 1-bit sekalipun. Pada mode portable, berkas `exambro.cfg` mandiri dapat dicopy ke komputer lain tanpa terikat SID DPAPI mesin pembuat. |
+| **Hak Akses Klien Ujian** | Klien `ExamBro.Exam.exe` WAJIB berjalan dengan hak Administrator penuh (`requireAdministrator`) | Memberikan perizinan penuh dari OS untuk mengunci desktop, membunuh proses terlarang dengan integritas tinggi (CheatEngine, Task Manager, keylogger), mencegah bypass UIPI, dan mencegah penutupan paksa dari pihak luar. |
+| **Kombinasi Keluar** | Wajib menggunakan `Ctrl + C + B` + Kata Sandi Pengawas | Kombinasi tombol chorded 3 jari yang tidak sengaja tertekan siswa dan terlindungi oleh dialog verifikasi password PBKDF2. |
 | **Ctrl+Alt+Del** | Tidak dapat diblokir via keyboard hook Win32; dicegah melalui HKCU Registry Policies | Arsitektur keamanan kernel Windows melindungi urutan SAS (Secure Attention Sequence). Oleh karena itu, Task Manager, Change Password, Lock, dan Logoff dinonaktifkan di registry selama sesi ujian. |
 | **Start URL Override** | Argumen command line `--url=` diabaikan secara default | Mencegah peserta meluncurkan ujian ke server phising/palsu melalui manipulasi shortcut. Hanya diizinkan jika `AllowCommandLineOverride=true` diatur oleh admin. |
 | **Blacklist vs Whitelist URL** | Blacklist selalu menang atas Whitelist | Jika suatu pola URL cocok dengan whitelist tetapi juga cocok dengan blacklist, URL tersebut tetap diblokir. |
@@ -326,14 +328,29 @@ Jalankan `ExamBro-Setup-v1.0.0.exe` dengan hak Administrator. Installer akan:
 
 ---
 
+## PANDUAN PENGGUNAAN MODE PORTABLE (COPY-PASTE)
+
+ExamBro mendukung penuh format **Portable** tanpa perlu installer:
+1. Siapkan folder hasil publish atau copy folder aplikasi ExamBro (berisi `ExamBro.Exam.exe`, `ExamBro.Config.exe`, dan dependensinya).
+2. Jalankan `ExamBro.Config.exe` sebagai Administrator di salah satu komputer:
+   - Atur Start URL, Whitelist URL, dan Password Pengawas/Admin.
+   - Klik tombol **📦 Simpan Portable** atau **Simpan exambro.cfg Portable** di tab Admin.
+   - Berkas `exambro.cfg` mandiri terenkripsi akan tersimpan di dalam folder aplikasi tersebut.
+3. Cukup **copy-paste** seluruh folder tersebut ke flashdisk atau komputer peserta ujian (misal di `D:\ExamBro` atau Desktop).
+4. Di komputer peserta, jalankan `ExamBro.Exam.exe` (klik kanan *Run as administrator* jika diminta UAC).
+5. Aplikasi akan langsung mendeteksi `exambro.cfg` lokal dan mengunci sistem ke mode ujian dengan hak penuh Administrator.
+
+---
+
 ## CHECKLIST PENGUJIAN MANUAL UNTUK PENGAWAS / QA
 
 Gunakan daftar centang berikut untuk memvalidasi kesiapan sistem sebelum ujian berlangsung:
 
 ### 1. Uji Coba Kiosk & Isolasi Desktop
+- [ ] **Hak Administrator**: Muncul prompt UAC saat membuka ExamBro, dan diagnosa pra-terbang mencatat status Administrator: Lolos.
 - [ ] **Layar Penuh**: ExamBro terbuka secara fullscreen tanpa title bar, border, tombol minimize, maximize, atau close.
 - [ ] **Taskbar**: Taskbar Windows menghilang sepenuhnya dari monitor utama dan monitor sekunder.
-- [ ] **Kunci Fokus**: Klik mouse di luar jendela (jika terlihat sedikit) atau mencoba menekan tombol kombinasi tidak memindahkan fokus dari ExamBro.
+- [ ] **Kunci Fokus**: Klik mouse di luar jendela atau mencoba menekan tombol kombinasi tidak memindahkan fokus dari ExamBro.
 
 ### 2. Uji Coba Pemblokiran Tombol Keyboard
 - [ ] Tekan tombol **Windows (kiri / kanan)**: Menu Start tidak terbuka.
@@ -361,7 +378,7 @@ Gunakan daftar centang berikut untuk memvalidasi kesiapan sistem sebelum ujian b
 - [ ] Buka aplikasi OBS Studio atau Discord di latar belakang: Rekaman layar pada jendela ExamBro hanya menampilkan layar hitam pekat (*Display Affinity Exclusion*).
 
 ### 6. Uji Coba Keluar & Pemulihan Sistem
-- [ ] Tekan shortcut rahasia **Ctrl + Shift + Q**: Dialog autentikasi pengawas muncul.
+- [ ] Tekan kombinasi wajib **Ctrl + C + B**: Dialog konfirmasi kata sandi pengawas muncul.
 - [ ] Masukkan password salah sebanyak 5 kali: Sistem terkunci selama 30 detik.
 - [ ] Masukkan password pengawas yang benar: Aplikasi menutup secara elegan.
 - [ ] **Verifikasi Pemulihan**: Taskbar Windows kembali terlihat, Task Manager dapat dibuka kembali secara normal, dan fungsi tombol Windows kembali aktif.

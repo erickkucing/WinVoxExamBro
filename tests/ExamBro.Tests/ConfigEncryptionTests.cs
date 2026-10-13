@@ -105,4 +105,38 @@ public class ConfigEncryptionTests
 
         Assert.NotEqual(hash1, hash2);
     }
+
+    [Fact]
+    public void PortableConfig_RoundTrip_PreservesConfig()
+    {
+        var original = CreateTestConfig();
+
+        byte[] encrypted = ConfigEncryption.EncryptPortableConfig(original);
+        var decrypted = ConfigEncryption.DecryptConfig(encrypted);
+
+        Assert.Equal(original.General.StartUrl, decrypted.General.StartUrl);
+        Assert.Equal(original.General.AppTitle, decrypted.General.AppTitle);
+        Assert.Equal(original.Admin.AdminPasswordHash, decrypted.Admin.AdminPasswordHash);
+        Assert.Equal(original.Admin.ExitShortcut, decrypted.Admin.ExitShortcut);
+    }
+
+    [Fact]
+    public void PortableConfig_TamperedCiphertext_Throws()
+    {
+        var original = CreateTestConfig();
+        byte[] encrypted = ConfigEncryption.EncryptPortableConfig(original);
+
+        // Tamper with payload byte
+        encrypted[^1] ^= 0x55;
+
+        Assert.ThrowsAny<System.Security.Cryptography.CryptographicException>(
+            () => ConfigEncryption.DecryptConfig(encrypted));
+    }
+
+    [Fact]
+    public void DefaultConfig_HasCtrlCBExitShortcut()
+    {
+        var config = ExamConfig.CreateDefault();
+        Assert.Equal("Ctrl+C+B", config.Admin.ExitShortcut);
+    }
 }

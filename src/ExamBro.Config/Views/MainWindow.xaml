@@ -454,9 +454,11 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="220"/>
                                         <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="Pintasan Keluar (Shortcut):" VerticalAlignment="Center" FontWeight="SemiBold"/>
                                     <TextBox Grid.Column="1" Text="{Binding ExitShortcut, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"/>
+                                    <TextBlock Grid.Column="2" Text="Standar: Ctrl+C+B (tekan Ctrl bersamaan tombol C dan B)" VerticalAlignment="Center" Margin="10,0,0,0" Foreground="{StaticResource SecondaryTextBrush}"/>
                                 </Grid>
 
                                 <Grid Margin="0,0,0,8">
@@ -481,10 +483,10 @@
                             </StackPanel>
                         </GroupBox>
 
-                        <!-- GroupBox Ekspor / Impor -->
-                        <GroupBox Header="Ekspor &amp; Impor Berkas Konfigurasi">
+                        <!-- GroupBox Ekspor / Impor & Distribusi Portable -->
+                        <GroupBox Header="Ekspor, Impor &amp; Distribusi Portable">
                             <StackPanel Margin="6">
-                                <TextBlock Text="Konfigurasi dapat diekspor ke dalam berkas (.exbcfg) yang dienkripsi dengan kata sandi agar aman didistribusikan ke komputer klien ujian." 
+                                <TextBlock Text="Konfigurasi dapat diekspor ke dalam berkas (.exbcfg) terenkripsi kata sandi, atau disimpan sebagai berkas mandiri (exambro.cfg) untuk aplikasi versi portable (cukup copy-paste folder)." 
                                            TextWrapping="Wrap" 
                                            FontSize="12" 
                                            Foreground="{StaticResource SecondaryTextBrush}" 
@@ -498,6 +500,11 @@
                                             Style="{StaticResource SecondaryButton}" 
                                             Margin="0,0,12,6" 
                                             Command="{Binding ImportCommand}"/>
+                                    <Button Content="📦 Simpan exambro.cfg Portable" 
+                                            Style="{StaticResource SecondaryButton}" 
+                                            Margin="0,0,12,6" 
+                                            ToolTip="Simpan konfigurasi mandiri ke folder aplikasi agar langsung bisa dicopy-paste ke komputer lain"
+                                            Command="{Binding SavePortableCommand}"/>
                                 </WrapPanel>
                             </StackPanel>
                         </GroupBox>
@@ -567,12 +574,19 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Save Button in StatusBar -->
-                <Button Grid.Column="0" 
-                        Content="💾 Simpan Konfigurasi" 
-                        Style="{StaticResource PrimaryButton}" 
-                        Padding="16,6" 
-                        Command="{Binding SaveCommand}"/>
+                <!-- Save Buttons in StatusBar -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                    <Button Content="💾 Simpan Konfigurasi" 
+                            Style="{StaticResource PrimaryButton}" 
+                            Padding="16,6" 
+                            Margin="0,0,8,0"
+                            Command="{Binding SaveCommand}"/>
+                    <Button Content="📦 Simpan Portable" 
+                            Style="{StaticResource SecondaryButton}" 
+                            Padding="12,6" 
+                            ToolTip="Simpan exambro.cfg langsung di folder aplikasi untuk keperluan portable"
+                            Command="{Binding SavePortableCommand}"/>
+                </StackPanel>
 
                 <!-- Status Message -->
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">

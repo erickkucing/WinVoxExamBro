@@ -21,16 +21,68 @@ public static class ConfigEncryption
         Converters = { new JsonStringEnumConverter() }
     };
 
-    // ── Local (DPAPI) encryption ──────────────────────────────────────
+    private static readonly byte[] PortableSalt =
+    {
+        0x57, 0x69, 0x6E, 0x56, 0x6F, 0x78, 0x5F, 0x45,
+        0x78, 0x61, 0x6D, 0x42, 0x72, 0x6F, 0x5F, 0x50,
+        0x6F, 0x72, 0x74, 0x61, 0x62, 0x6C, 0x65, 0x5F,
+        0x53, 0x61, 0x6C, 0x74, 0x5F, 0x56, 0x31, 0x2E
+    };
 
     /// <summary>
-    /// Encrypt a config for local storage. Format:
+    /// Derives a deterministic 256-bit portable master key using PBKDF2-HMAC-SHA256.
+    /// Used for portable standalone deployment across computers without DPAPI machine binding.
+    /// </summary>
+    public static byte[] GetPortableMasterKey()
+    {
+        using var kdf = new Rfc2898DeriveBytes(
+            Constants.AppEntropy,
+            PortableSalt,
+            Constants.PasswordIterations,
+            HashAlgorithmName.SHA256);
+        return kdf.GetBytes(Constants.KeyLength);
+    }
+
+    /// <summary>
+    /// Encrypt a config for portable standalone deployment. Format:
     /// [4-byte version LE][12-byte nonce][16-byte tag][ciphertext]
     /// </summary>
-    public static byte[] EncryptConfig(ExamConfig config, byte[]? entropy = null)
+    public static byte[] EncryptPortableConfig(ExamConfig config)
+    {
+        return EncryptConfigInternal(config, GetPortableMasterKey());
+    }
+
+    /// <summary>
+    /// Encrypt a config for local storage. If portable is true, uses portable key;
+    /// otherwise uses DPAPI (falling back to portable if DPAPI is unavailable).
+    /// </summary>
+    public static byte[] EncryptConfig(ExamConfig config, byte[]? entropy = null, bool portable = false)
+    {
+        if (portable)
+        {
+            return EncryptPortableConfig(config);
+        }
+
+        byte[]? key = null;
+        try
+        {
+            if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+            {
+                key = GetOrCreateMasterKey(entropy ?? Constants.AppEntropy);
+            }
+        }
+        catch
+        {
+            // Fallback to portable key if DPAPI store cannot be accessed
+        }
+
+        key ??= GetPortableMasterKey();
+        return EncryptConfigInternal(config, key);
+    }
+
+    private static byte[] EncryptConfigInternal(ExamConfig config, byte[] key)
     {
         byte[] plaintext = JsonSerializer.SerializeToUtf8Bytes(config, JsonOpts);
-        byte[] key = GetOrCreateMasterKey(entropy ?? Constants.AppEntropy);
 
         byte[] nonce = new byte[Constants.NonceLength];
         RandomNumberGenerator.Fill(nonce);
@@ -41,7 +93,6 @@ public static class ConfigEncryption
         using var aes = new AesGcm(key, Constants.TagLength);
         aes.Encrypt(nonce, plaintext, ciphertext, tag);
 
-        // Assemble output: version + nonce + tag + ciphertext
         byte[] result = new byte[4 + Constants.NonceLength + Constants.TagLength + ciphertext.Length];
         BitConverter.GetBytes(Constants.ConfigVersion).CopyTo(result, 0);
         nonce.CopyTo(result, 4);
@@ -55,8 +106,8 @@ public static class ConfigEncryption
     }
 
     /// <summary>
-    /// Decrypt a locally-stored config blob. Throws <see cref="CryptographicException"/>
-    /// if the blob has been tampered with or the key is wrong.
+    /// Decrypt a locally-stored or portable config blob. Throws <see cref="CryptographicException"/>
+    /// if the blob has been tampered with or cannot be decrypted by any valid key.
     /// </summary>
     public static ExamConfig DecryptConfig(byte[] data, byte[]? entropy = null)
     {
@@ -67,8 +118,31 @@ public static class ConfigEncryption
         if (version != Constants.ConfigVersion)
             throw new CryptographicException($"Versi konfigurasi tidak didukung: {version}");
 
-        byte[] key = GetOrCreateMasterKey(entropy ?? Constants.AppEntropy);
+        // Attempt 1: Try DPAPI key (for installed mode on current machine)
+        if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+        {
+            try
+            {
+                byte[] dpapiKey = GetOrCreateMasterKey(entropy ?? Constants.AppEntropy);
+                return DecryptWithKey(data, dpapiKey);
+            }
+            catch (CryptographicException)
+            {
+                // DPAPI key failed or tag mismatch; continue to attempt portable key
+            }
+            catch (Exception)
+            {
+                // Keystore read/permission issue; continue to portable attempt
+            }
+        }
 
+        // Attempt 2: Try Portable Master Key (for portable copy-pasted folders)
+        byte[] portableKey = GetPortableMasterKey();
+        return DecryptWithKey(data, portableKey);
+    }
+
+    private static ExamConfig DecryptWithKey(byte[] data, byte[] key)
+    {
         try
         {
             byte[] nonce = new byte[Constants.NonceLength];
@@ -180,10 +254,8 @@ public static class ConfigEncryption
         }
     }
 
-    // ── Hashing ───────────────────────────────────────────────────────
-
     /// <summary>
-    /// SHA-256 hash of canonical (sorted, indented) JSON — useful for
+    /// SHA-256 hash of canonical (sorted, indented) JSON, useful for
     /// verifying that a config has not been modified.
     /// </summary>
     public static string ComputeConfigHash(ExamConfig config)

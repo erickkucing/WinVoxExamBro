@@ -444,12 +444,13 @@ public partial class MainViewModel : ObservableObject
                 Directory.CreateDirectory(directory);
             }
 
-            byte[] encrypted = ConfigEncryption.EncryptConfig(config);
+            bool isPortable = Constants.IsPortableMode || targetFile.Equals(Constants.PortableConfigPath, StringComparison.OrdinalIgnoreCase);
+            byte[] encrypted = ConfigEncryption.EncryptConfig(config, portable: isPortable);
             File.WriteAllBytes(targetFile, encrypted);
 
             ConfigHash = ConfigEncryption.ComputeConfigHash(config);
             StatusMessage = $"Konfigurasi berhasil disimpan! ({DateTime.Now:HH:mm:ss})";
-            Log.Information("Konfigurasi ExamBro berhasil disimpan ke {Path}", targetFile);
+            Log.Information("Konfigurasi ExamBro berhasil disimpan ke {Path} (Portable={IsPortable})", targetFile, isPortable);
 
             MessageBox.Show(
                 "Konfigurasi ExamBro berhasil disimpan dan dienkripsi dengan aman.",
@@ -463,6 +464,63 @@ public partial class MainViewModel : ObservableObject
             StatusMessage = $"Kesalahan saat menyimpan: {ex.Message}";
             MessageBox.Show(
                 $"Terjadi kesalahan saat menyimpan file konfigurasi: {ex.Message}",
+                "Kesalahan",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    [RelayCommand]
+    private void SavePortable()
+    {
+        try
+        {
+            var config = ToConfig();
+            var errors = ConfigValidator.Validate(config);
+
+            ValidationErrors.Clear();
+            bool hasFatalError = false;
+            foreach (var err in errors)
+            {
+                ValidationErrors.Add(err);
+                if (err.Severity == ValidationSeverity.Error)
+                    hasFatalError = true;
+            }
+
+            HasErrors = errors.Count > 0;
+
+            if (hasFatalError)
+            {
+                StatusMessage = "Gagal menyimpan: perbaiki kesalahan konfigurasi terlebih dahulu.";
+                string errorList = string.Join("\n• ", errors.Where(e => e.Severity == ValidationSeverity.Error).Select(e => e.Message));
+                MessageBox.Show(
+                    $"Konfigurasi tidak dapat disimpan karena terdapat kesalahan validasi:\n\n• {errorList}",
+                    "Validasi Gagal",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
+
+            string targetFile = Constants.PortableConfigPath;
+            byte[] encrypted = ConfigEncryption.EncryptPortableConfig(config);
+            File.WriteAllBytes(targetFile, encrypted);
+
+            ConfigHash = ConfigEncryption.ComputeConfigHash(config);
+            StatusMessage = $"Konfigurasi portable berhasil disimpan! ({DateTime.Now:HH:mm:ss})";
+            Log.Information("Konfigurasi ExamBro portable berhasil disimpan ke {Path}", targetFile);
+
+            MessageBox.Show(
+                $"Konfigurasi ExamBro versi Portable berhasil disimpan ke:\n{targetFile}\n\nFolder ini sekarang dapat langsung disalin ke komputer peserta ujian.",
+                "Simpan Portable Berhasil",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Gagal menyimpan konfigurasi portable");
+            StatusMessage = $"Kesalahan saat menyimpan portable: {ex.Message}";
+            MessageBox.Show(
+                $"Terjadi kesalahan saat menyimpan file konfigurasi portable: {ex.Message}",
                 "Kesalahan",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);

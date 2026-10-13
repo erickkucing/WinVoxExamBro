@@ -161,6 +161,30 @@ public static class EnvironmentDetector
     }
 
     /// <summary>
+    /// Checks whether the current process is running with elevated Administrator privileges.
+    /// Full administrator rights are required to lock system policies and terminate illicit processes.
+    /// </summary>
+    public static bool IsElevatedAdministrator()
+    {
+        if (!System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+        {
+            return true;
+        }
+
+        try
+        {
+            using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            var principal = new System.Security.Principal.WindowsPrincipal(identity);
+            return principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to inspect process administrator elevation token");
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Detects if the current system appears to be running inside a virtual machine.
     /// </summary>
     public static (bool IsVm, string? Reason) DetectVirtualMachine()

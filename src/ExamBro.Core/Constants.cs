@@ -20,7 +20,7 @@ public static class Constants
     /// <summary>AES-256 key length in bytes.</summary>
     public const int KeyLength = 32;
 
-    /// <summary>PBKDF2 iteration count — meets OWASP 2024 recommendation.</summary>
+    /// <summary>PBKDF2 iteration count (meets OWASP 2024 recommendation).</summary>
     public const int PasswordIterations = 310_000;
 
     /// <summary>Salt length for password hashing.</summary>
@@ -33,7 +33,7 @@ public static class Constants
     public const string UserAgentSuffix = " ExamBro/1.0.0 ExamBrowser/1.0.0 LouisVox/1.0.0";
 
     /// <summary>Default keyboard shortcut to request exam exit.</summary>
-    public const string DefaultExitShortcut = "Ctrl+Shift+Q";
+    public const string DefaultExitShortcut = "Ctrl+C+B";
 
     /// <summary>Environment variable that activates dev-safe mode.</summary>
     public const string DevSafeEnvVar = "EXAMBRO_DEV";
@@ -47,11 +47,36 @@ public static class Constants
         0x70, 0x79, 0x5F, 0x56, 0x31, 0x2E, 0x30, 0x2E
     };
 
-    /// <summary>Config file path under ProgramData.</summary>
-    public static string ConfigFilePath =>
+    /// <summary>Portable config file path in the application directory.</summary>
+    public static string PortableConfigPath =>
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "exambro.cfg");
+
+    /// <summary>Installed system-wide config file path under ProgramData.</summary>
+    public static string SystemConfigFilePath =>
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             AppName, "exambro.cfg");
+
+    /// <summary>
+    /// Config file path: checks application directory first (portable mode),
+    /// then falls back to ProgramData (installed mode).
+    /// </summary>
+    public static string ConfigFilePath
+    {
+        get
+        {
+            string portable = PortableConfigPath;
+            if (File.Exists(portable))
+            {
+                return portable;
+            }
+
+            return SystemConfigFilePath;
+        }
+    }
+
+    /// <summary>Indicates whether the application is running in portable mode with local config.</summary>
+    public static bool IsPortableMode => File.Exists(PortableConfigPath);
 
     /// <summary>Crash-recovery state file under LocalAppData.</summary>
     public static string RecoveryFilePath =>
@@ -71,11 +96,25 @@ public static class Constants
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             AppName, "logs");
 
-    /// <summary>DPAPI-protected master key store.</summary>
-    public static string KeystorePath =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            AppName, "keystore");
+    /// <summary>
+    /// DPAPI-protected master key store path. Checks local application folder first,
+    /// then falls back to ProgramData.
+    /// </summary>
+    public static string KeystorePath
+    {
+        get
+        {
+            string localKeystore = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "keystore");
+            if (File.Exists(localKeystore))
+            {
+                return localKeystore;
+            }
+
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                AppName, "keystore");
+        }
+    }
 
     /// <summary>Registry path for user-level policies set during kiosk lock.</summary>
     public const string PolicyRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Policies";
