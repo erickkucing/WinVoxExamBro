@@ -30,7 +30,7 @@ public static class Constants
     public const int ConfigVersion = 1;
 
     /// <summary>Suffix appended to the WebView2 User-Agent string.</summary>
-    public const string UserAgentSuffix = " ExamBro/1.0.0";
+    public const string UserAgentSuffix = " ExamBro/1.0.0 ExamBrowser/1.0.0 LouisVox/1.0.0";
 
     /// <summary>Default keyboard shortcut to request exam exit.</summary>
     public const string DefaultExitShortcut = "Ctrl+Shift+Q";

@@ -40,6 +40,8 @@ public partial class LockScreen : UserControl
         _config = config;
     }
 
+    public bool IsLocked => Visibility == Visibility.Visible;
+
     public void ShowLock(string reason)
     {
         txtReason.Text = reason;
@@ -49,6 +51,20 @@ public partial class LockScreen : UserControl
 
         Visibility = Visibility.Visible;
         pwdProctor.Focus();
+    }
+
+    /// <summary>
+    /// Unlocks the session remotely when authorized by proctor from projectCBT web dashboard.
+    /// </summary>
+    public void RemoteUnlock()
+    {
+        Log.Information("Remote unlock received from CBT web server");
+        _failedAttempts = 0;
+        _lockoutSecondsRemaining = 0;
+        _lockoutTimer.Stop();
+        pwdProctor.Password = string.Empty;
+        Visibility = Visibility.Collapsed;
+        Unlocked?.Invoke();
     }
 
     private void PwdProctor_KeyDown(object sender, KeyEventArgs e)

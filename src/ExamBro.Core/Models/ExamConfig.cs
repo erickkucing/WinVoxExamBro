@@ -49,7 +49,7 @@ public class NavigationConfig
     public bool AutoAllowStartUrlHost { get; set; } = true;
     public List<string> AllowedUrlPatterns { get; set; } = new() { "https://ujian.contoh.sch.id/*" };
     public List<string> BlockedUrlPatterns { get; set; } = new();
-    public string ExitUrlPattern { get; set; } = "https://ujian.contoh.sch.id/selesai*";
+    public string ExitUrlPattern { get; set; } = "*/exam/finished/*";
     public int ExitUrlAutoCloseSeconds { get; set; } = 5;
     public bool AllowBackForward { get; set; } = false;
     public bool AllowReload { get; set; } = true;

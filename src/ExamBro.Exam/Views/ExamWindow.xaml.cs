@@ -58,6 +58,7 @@ public partial class ExamWindow : Window
         _viewModel.RequestExitRequested += ShowExitConfirmation;
 
         // Overlay Events
+        warningOverlay.Dismissed += () => SetWebOverlayActive(false);
         lockScreen.Initialize(_config);
         lockScreen.Unlocked += OnLockScreenUnlocked;
         completionOverlay.ExitRequested += CloseGracefully;
@@ -94,7 +95,7 @@ public partial class ExamWindow : Window
             _config.General.PlaceholderUsername ? Environment.UserName : null,
             _config.General.PlaceholderMachine ? Environment.MachineName : null);
 
-        // Auto-allow start URL host if configured
+        // Auto-allow start URL host and authority if configured (including ports like :8000)
         if (_config.Navigation.AutoAllowStartUrlHost)
         {
             string hostPattern = UrlMatcher.BuildHostPattern(_resolvedStartUrl);
@@ -102,6 +103,20 @@ public partial class ExamWindow : Window
             {
                 _config.Navigation.AllowedUrlPatterns.Insert(0, hostPattern);
                 Log.Information("Auto-allowed start host pattern: {Pattern}", hostPattern);
+            }
+
+            if (Uri.TryCreate(_resolvedStartUrl, UriKind.Absolute, out Uri? uri))
+            {
+                string wildcardAuth = $"*://{uri.Authority}/*";
+                if (!_config.Navigation.AllowedUrlPatterns.Contains(wildcardAuth, StringComparer.OrdinalIgnoreCase))
+                {
+                    _config.Navigation.AllowedUrlPatterns.Insert(0, wildcardAuth);
+                }
+                string wildcardHost = $"*://{uri.Host}/*";
+                if (!_config.Navigation.AllowedUrlPatterns.Contains(wildcardHost, StringComparer.OrdinalIgnoreCase))
+                {
+                    _config.Navigation.AllowedUrlPatterns.Insert(0, wildcardHost);
+                }
             }
         }
 
@@ -114,11 +129,19 @@ public partial class ExamWindow : Window
         _violationManager = new ViolationManager(_config);
         _violationManager.ShowWarning += (type, msg, count) =>
         {
-            Dispatcher.Invoke(() => warningOverlay.ShowWarning(msg, count));
+            Dispatcher.Invoke(() =>
+            {
+                SetWebOverlayActive(true);
+                warningOverlay.ShowWarning(msg, count);
+            });
         };
         _violationManager.ShowLockScreen += (type, reason) =>
         {
-            Dispatcher.Invoke(() => lockScreen.ShowLock(reason));
+            Dispatcher.Invoke(() =>
+            {
+                SetWebOverlayActive(true);
+                lockScreen.ShowLock(reason);
+            });
         };
         _violationManager.RequestTerminate += (type, reason) =>
         {
@@ -143,6 +166,7 @@ public partial class ExamWindow : Window
             _keyboardHook.BlockedKeyDetected += desc =>
             {
                 _violationManager.RecordViolation(ViolationEventType.BlockedKey, desc);
+                NotifyWebAntiCheatViolation("devtools_open", $"Shortcut keyboard terlarang: {desc}");
             };
             _keyboardHook.ExitShortcutRequested += () =>
             {
@@ -158,6 +182,7 @@ public partial class ExamWindow : Window
             _focusGuard.FocusLost += () =>
             {
                 _violationManager.RecordViolation(ViolationEventType.FocusLost);
+                NotifyWebAntiCheatViolation("window_blur", "Fokus jendela ExamBro berpindah di sistem operasi");
             };
             _focusGuard.Start(_hwnd);
         }
@@ -167,6 +192,7 @@ public partial class ExamWindow : Window
         _processMonitor.BlockedProcessDetected += (name, pid) =>
         {
             _violationManager.RecordViolation(ViolationEventType.BlockedProcess, $"{name} (PID: {pid})");
+            NotifyWebAntiCheatSevereViolation($"Aplikasi terlarang terdeteksi di Windows: {name} (PID: {pid})");
         };
         _processMonitor.Start();
 
@@ -175,6 +201,7 @@ public partial class ExamWindow : Window
         _clipboardService.ClipboardViolationDetected += () =>
         {
             _violationManager.RecordViolation(ViolationEventType.ClipboardAttempt);
+            NotifyWebAntiCheatViolation("clipboard_action", "Akses clipboard sistem terdeteksi");
         };
         _clipboardService.Initialize(_hwnd);
 
@@ -186,6 +213,7 @@ public partial class ExamWindow : Window
             _screenProtection.EnforceMonitorPolicy(msg =>
             {
                 _violationManager.RecordViolation(ViolationEventType.MultiMonitor, msg);
+                NotifyWebAntiCheatViolation("multi_monitor", msg);
             });
         }
     }
@@ -194,7 +222,7 @@ public partial class ExamWindow : Window
     {
         try
         {
-            Log.Information("Initializing WebView2 browser environment...");
+            Log.Information("Initializing WebView2 browser environment with projectCBT synchronization...");
 
             string dataFolder = Constants.WebView2DataFolder;
             string userAgentArg = $"--user-agent-product=\"{Constants.UserAgentSuffix.Trim()}\"";
@@ -208,6 +236,9 @@ public partial class ExamWindow : Window
             ConfigureWebViewSettings();
             AttachWebViewEvents();
 
+            // Inject projectCBT JavaScript bridge before document creation
+            await InjectProjectCbtBridgeAsync();
+
             // Clear cache and cookies for privacy isolation
             await webView.CoreWebView2.Profile.ClearBrowsingDataAsync();
 
@@ -219,6 +250,62 @@ public partial class ExamWindow : Window
             Log.Error(ex, "Failed to initialize WebView2 engine");
             ShowErrorPage();
         }
+    }
+
+    private async Task InjectProjectCbtBridgeAsync()
+    {
+        // Bridge script providing window.LouisVoxExamApp and anti-blur suppression
+        string bridgeScript = @"
+(function() {
+    window.__louisvox_suppress_blur = false;
+    window.__exambro_overlay_active = false;
+
+    window.LouisVoxExamApp = {
+        onWebExamConfig: function(maxStrikes, strikes, isLocked) {
+            try {
+                window.chrome.webview.postMessage(JSON.stringify({
+                    handler: 'CBT_CONFIG',
+                    maxStrikes: maxStrikes,
+                    strikes: strikes,
+                    isLocked: isLocked
+                }));
+            } catch (e) {}
+        },
+        onWebViolationRecorded: function(type, strikes, maxStrikes, message, isLocked) {
+            try {
+                window.chrome.webview.postMessage(JSON.stringify({
+                    handler: 'CBT_VIOLATION',
+                    type: type,
+                    strikes: strikes,
+                    maxStrikes: maxStrikes,
+                    message: message,
+                    isLocked: isLocked
+                }));
+            } catch (e) {}
+        },
+        isAlarmOverlayActive: function() {
+            return window.__exambro_overlay_active === true || window.__louisvox_suppress_blur === true;
+        },
+        onWebSessionUnlocked: function(strikes) {
+            try {
+                window.chrome.webview.postMessage(JSON.stringify({
+                    handler: 'CBT_UNLOCKED',
+                    strikes: strikes
+                }));
+            } catch (e) {}
+        },
+        onExamFinished: function() {
+            try {
+                window.chrome.webview.postMessage(JSON.stringify({
+                    handler: 'CBT_FINISHED'
+                }));
+            } catch (e) {}
+        }
+    };
+})();
+";
+        await webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(bridgeScript);
+        Log.Information("Injected LouisVoxExamApp JavaScript bridge for projectCBT.");
     }
 
     private void ConfigureWebViewSettings()
@@ -240,6 +327,10 @@ public partial class ExamWindow : Window
     {
         var core = webView.CoreWebView2;
 
+        // 1. Add WebResourceRequested filter to inject projectCBT authentication & signature headers
+        core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
+        core.WebResourceRequested += OnWebResourceRequested;
+
         core.NavigationStarting += OnNavigationStarting;
         core.FrameNavigationStarting += OnFrameNavigationStarting;
         core.NewWindowRequested += OnNewWindowRequested;
@@ -248,6 +339,23 @@ public partial class ExamWindow : Window
         core.ProcessFailed += OnProcessFailed;
         core.WebMessageReceived += OnWebMessageReceived;
         core.NavigationCompleted += OnNavigationCompleted;
+    }
+
+    private void OnWebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
+    {
+        try
+        {
+            // Injects ExamBrowser headers verified by projectCBT EnsureExamBrowser / SiteSetting::isExamBrowser
+            e.Request.Headers.SetHeader("X-ExamBro-Version", Constants.AppVersion);
+            e.Request.Headers.SetHeader("X-Exambrowser", "1");
+            e.Request.Headers.SetHeader("X-Exambro", "1");
+            e.Request.Headers.SetHeader("X-Exam-Browser", "1");
+            e.Request.Headers.SetHeader("X-CBT-Browser", "1");
+        }
+        catch
+        {
+            // best effort
+        }
     }
 
     // ── WebView2 Event Handlers ──────────────────────────────────────────────
@@ -361,16 +469,127 @@ public partial class ExamWindow : Window
         try
         {
             string msg = e.TryGetWebMessageAsString();
+            if (string.IsNullOrEmpty(msg)) return;
+
             if (msg.Equals("retry", StringComparison.OrdinalIgnoreCase))
             {
                 Log.Information("User requested retry from error page");
                 string target = !string.IsNullOrEmpty(_lastValidUrl) ? _lastValidUrl : _resolvedStartUrl;
                 webView.CoreWebView2.Navigate(target);
+                return;
+            }
+
+            // Handle projectCBT JSON messages from LouisVoxExamApp bridge
+            if (msg.StartsWith("{") && msg.EndsWith("}"))
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(msg);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("handler", out var handlerProp))
+                {
+                    string handler = handlerProp.GetString() ?? "";
+                    switch (handler)
+                    {
+                        case "CBT_CONFIG":
+                            int maxStrikes = root.TryGetProperty("maxStrikes", out var ms) ? ms.GetInt32() : 3;
+                            int strikes = root.TryGetProperty("strikes", out var s) ? s.GetInt32() : 0;
+                            bool isLocked = root.TryGetProperty("isLocked", out var l) && l.GetBoolean();
+                            Log.Information("projectCBT Config Synced: maxStrikes={Max}, currentStrikes={Strikes}, locked={Locked}", maxStrikes, strikes, isLocked);
+                            if (isLocked)
+                            {
+                                Dispatcher.Invoke(() =>
+                                {
+                                    SetWebOverlayActive(true);
+                                    lockScreen.ShowLock("Sesi ujian berstatus terkunci di server CBT.");
+                                });
+                            }
+                            break;
+
+                        case "CBT_VIOLATION":
+                            string vType = root.TryGetProperty("type", out var vt) ? vt.GetString() ?? "" : "";
+                            string vMsg = root.TryGetProperty("message", out var vm) ? vm.GetString() ?? "" : "Pelanggaran ujian terdeteksi.";
+                            int vStrikes = root.TryGetProperty("strikes", out var vs) ? vs.GetInt32() : 1;
+                            bool vLocked = root.TryGetProperty("isLocked", out var vl) && vl.GetBoolean();
+                            Log.Warning("projectCBT Violation Event: Type={Type}, Message={Msg}, Strikes={Strikes}, Locked={Locked}", vType, vMsg, vStrikes, vLocked);
+                            Dispatcher.Invoke(() =>
+                            {
+                                SetWebOverlayActive(true);
+                                if (vLocked)
+                                {
+                                    lockScreen.ShowLock(vMsg);
+                                }
+                                else
+                                {
+                                    warningOverlay.ShowWarning(vMsg, vStrikes);
+                                }
+                            });
+                            break;
+
+                        case "CBT_UNLOCKED":
+                            Log.Information("projectCBT Remote Unlock: Proctor unlocked student session via web dashboard.");
+                            Dispatcher.Invoke(() =>
+                            {
+                                lockScreen.RemoteUnlock();
+                                OnLockScreenUnlocked();
+                            });
+                            break;
+
+                        case "CBT_FINISHED":
+                            Log.Information("projectCBT Finished: Exam submitted successfully. Initiating completion countdown.");
+                            Dispatcher.Invoke(() =>
+                            {
+                                completionOverlay.ShowCompletion(_config.Navigation.ExitUrlAutoCloseSeconds);
+                            });
+                            break;
+                    }
+                }
             }
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Error handling WebMessage");
+            Log.Warning(ex, "Error handling WebMessage from WebView2");
+        }
+    }
+
+    private void SetWebOverlayActive(bool active)
+    {
+        try
+        {
+            string js = active
+                ? "window.__exambro_overlay_active = true; window.__louisvox_suppress_blur = true;"
+                : "window.__exambro_overlay_active = false; window.__louisvox_suppress_blur = false;";
+            _ = webView.CoreWebView2?.ExecuteScriptAsync(js);
+        }
+        catch
+        {
+            // best effort
+        }
+    }
+
+    private void NotifyWebAntiCheatViolation(string type, string reason)
+    {
+        try
+        {
+            string sanitized = reason.Replace("'", "\\'").Replace("\r", "").Replace("\n", " ");
+            string js = $"if (typeof window.__cbtReportViolation === 'function') {{ window.__cbtReportViolation('{type}', {{ reason: '{sanitized}' }}); }}";
+            _ = webView.CoreWebView2?.ExecuteScriptAsync(js);
+        }
+        catch
+        {
+            // best effort
+        }
+    }
+
+    private void NotifyWebAntiCheatSevereViolation(string reason)
+    {
+        try
+        {
+            string sanitized = reason.Replace("'", "\\'").Replace("\r", "").Replace("\n", " ");
+            string js = $"if (typeof window.__cbtReportSevereViolation === 'function') {{ window.__cbtReportSevereViolation('{sanitized}'); }}";
+            _ = webView.CoreWebView2?.ExecuteScriptAsync(js);
+        }
+        catch
+        {
+            // best effort
         }
     }
 
@@ -457,6 +676,7 @@ public partial class ExamWindow : Window
     private void ShowExitConfirmation()
     {
         _focusGuard?.SetSuspended(true);
+        SetWebOverlayActive(true);
         try
         {
             var dialog = new ExitDialog(_config)
@@ -472,6 +692,7 @@ public partial class ExamWindow : Window
         }
         finally
         {
+            SetWebOverlayActive(false);
             _focusGuard?.SetSuspended(false);
             _focusGuard?.ReclaimFocus();
         }
@@ -479,6 +700,7 @@ public partial class ExamWindow : Window
 
     private void OnLockScreenUnlocked()
     {
+        SetWebOverlayActive(false);
         _violationManager?.ResetCount(ViolationEventType.FocusLost);
         _violationManager?.ResetCount(ViolationEventType.BlockedKey);
         _violationManager?.ResetCount(ViolationEventType.BlockedProcess);

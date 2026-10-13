@@ -62,9 +62,20 @@ public class UrlMatcherTests
     [InlineData("https://exam.com/selesai", "https://exam.com/selesai*", true)]
     [InlineData("https://exam.com/selesai?id=1", "https://exam.com/selesai*", true)]
     [InlineData("https://exam.com/login", "https://exam.com/selesai*", false)]
+    [InlineData("https://cbt.local/exam/finished/550e8400-e29b-41d4-a716-446655440000", "*/exam/finished/*", true)]
+    [InlineData("http://localhost:8000/exam/finished/abc-123", "*/exam/finished/*", true)]
+    [InlineData("http://localhost:8000/exam/workspace/abc-123", "*/exam/finished/*", false)]
     public void MatchesExitUrl_CorrectMatching(string url, string pattern, bool expected)
     {
         Assert.Equal(expected, UrlMatcher.MatchesExitUrl(url, pattern));
+    }
+
+    [Fact]
+    public void MatchesExitUrl_ProjectCbtRouteFallback()
+    {
+        // Even if custom pattern is null or different, projectCBT finished route is detected
+        Assert.True(UrlMatcher.MatchesExitUrl("https://cbt.school.id/exam/finished/session-uuid-123", null));
+        Assert.True(UrlMatcher.MatchesExitUrl("http://localhost:8000/exam/finished/session-uuid-123", "some_unrelated_pattern"));
     }
 
     [Fact]
@@ -84,5 +95,12 @@ public class UrlMatcherTests
     {
         string pattern = UrlMatcher.BuildHostPattern("https://exam.school.id/login?x=1");
         Assert.Equal("https://exam.school.id/*", pattern);
+    }
+
+    [Fact]
+    public void BuildHostPattern_PreservesCustomPort()
+    {
+        string pattern = UrlMatcher.BuildHostPattern("http://localhost:8000/siswa/dashboard");
+        Assert.Equal("http://localhost:8000/*", pattern);
     }
 }

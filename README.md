@@ -8,13 +8,14 @@ ExamBro adalah solusi peramban ujian aman (*secure exam browser*) berbasis nativ
 1. [Fitur Utama](#fitur-utama)
 2. [Arsitektur Solusi](#arsitektur-solusi)
 3. [Arsitektur Keamanan & Hardening](#arsitektur-keamanan--hardening)
-4. [Mode Pengembangan Aman (--dev-safe)](#mode-pengembangan-aman---dev-safe)
-5. [Mekanisme Pemulihan Sistem (Crash Recovery)](#mekanisme-pemulihan-sistem-crash-recovery)
-6. [Prasyarat Sistem](#prasyarat-sistem)
-7. [Panduan Build & Publish](#panduan-build--publish)
-8. [Panduan Deployment & Konfigurasi Awal](#panduan-deployment--konfigurasi-awal)
-9. [Daftar Asumsi & Keputusan Keamanan](#daftar-asumsi--keputusan-keamanan)
-10. [Checklist Pengujian Manual untuk Pengawas / QA](#checklist-pengujian-manual-untuk-pengawas--qa)
+4. [Integrasi & Kompatibilitas 100% dengan projectCBT](#integrasi--kompatibilitas-100-dengan-projectcbt)
+5. [Mode Pengembangan Aman (--dev-safe)](#mode-pengembangan-aman---dev-safe)
+6. [Mekanisme Pemulihan Sistem (Crash Recovery)](#mekanisme-pemulihan-sistem-crash-recovery)
+7. [Prasyarat Sistem](#prasyarat-sistem)
+8. [Panduan Build & Publish](#panduan-build--publish)
+9. [Panduan Deployment & Konfigurasi Awal](#panduan-deployment--konfigurasi-awal)
+10. [Daftar Asumsi & Keputusan Keamanan](#daftar-asumsi--keputusan-keamanan)
+11. [Checklist Pengujian Manual untuk Pengawas / QA](#checklist-pengujian-manual-untuk-pengawas--qa)
 
 ---
 
@@ -152,7 +153,44 @@ Nilai awal dari setiap registry key dicatat sebelum diubah, dan dipulihkan sepen
   - `NewWindowRequested`: Selalu diatur `e.Handled = true`. Jika URL tujuan diizinkan, browser diarahkan di tab/jendela yang sama; jika tidak, dibatalkan.
   - `DownloadStarting`: Selalu dibatalkan (`e.Cancel = true`) kecuali opsi `AllowDownloads` diaktifkan di konfigurasi.
   - `PermissionRequested`: Semua izin perangkat keras (kamera, mikrofon, geolokasi, notifikasi) ditolak secara otomatis kecuali yang secara spesifik diizinkan untuk keperluan proctoring online.
-  - `User-Agent & Headers`: Ditambahkan suffix ` ExamBro/1.0.0` serta header kustom `X-ExamBro-Version` pada setiap HTTP request.
+  - `User-Agent & Headers`: Ditambahkan suffix ` ExamBro/1.0.0 ExamBrowser/1.0.0 LouisVox/1.0.0` serta header kustom `X-ExamBro-Version`, `X-Exambrowser: 1`, `X-Exambro: 1`, `X-Exam-Browser: 1`, dan `X-CBT-Browser: 1` pada setiap HTTP request.
+
+---
+
+## INTEGRASI & KOMPATIBILITAS 100% DENGAN projectCBT
+
+ExamBro dirancang agar terhubung secara native, dua arah, dan 100% kompatibel dengan aplikasi backend/frontend **projectCBT** tanpa memerlukan modifikasi apa pun pada kode sumber `projectCBT`:
+
+### 1. Deteksi & Otentikasi Klien ExamBrowser
+- **Signature User-Agent**: Suffix User-Agent ` ExamBro/1.0.0 ExamBrowser/1.0.0 LouisVox/1.0.0` secara otomatis dikenali oleh filter `SiteSetting::isExamBrowser` dan middleware `EnsureExamBrowser` di projectCBT (`exambro`, `exambrowser`, `cbtbrowser`).
+- **HTTP Request Headers**: Setiap request WebView2 menyertakan header:
+  - `X-Exambrowser: 1`
+  - `X-Exambro: 1`
+  - `X-Exam-Browser: 1`
+  - `X-CBT-Browser: 1`
+  - `X-ExamBro-Version: 1.0.0`
+  Hal ini menjamin middleware `EnsureExamBrowser` pada rute `/siswa/*` dan `/exam/*` tidak pernah menolak akses siswa ke portal ujian.
+
+### 2. JavaScript Bridge Native (`window.LouisVoxExamApp`)
+ExamBro menginjeksi antarmuka JavaScript bridge `window.LouisVoxExamApp` ke dalam DOM dokumen WebView2 sebelum halaman dimuat:
+- `onWebExamConfig(maxStrikes, strikes, isLocked)`: Menerima batas toleransi dan status kunci sesi dari halaman `anti-cheat.blade.php`.
+- `onWebViolationRecorded(type, strikes, maxStrikes, message, isLocked)`: Menerima rekaman insiden dari web anti-cheat dan menampilkan overlay visual di layar siswa.
+- `isAlarmOverlayActive()`: Mengembalikan nilai `true` ketika ExamBro sedang menampilkan dialog password pengawas, layar peringatan, atau layar kunci.
+- `onWebSessionUnlocked(strikes)`: **Remote Unlock** — ketika pengawas membuka kunci siswa melalui Dashboard Pengawas web projectCBT, layar kunci ExamBro otomatis terbuka secara instan tanpa perlu mengetik ulang password di PC siswa.
+- `onExamFinished()`: **Auto-Release Kiosk** — ketika siswa menyelesaikan ujian di rute `/exam/finished/{session_uuid}`, ExamBro otomatis mendeteksi penyerahan lembar jawaban, menampilkan kartu konfirmasi "Ujian Berhasil Diserahkan", dan menutup peramban secara aman setelah hitungan mundur.
+
+### 3. Pencegahan Total False Positive Anti-Cheat
+Sistem anti-cheat cerdas di `anti-cheat.blade.php` dan `useAntiCheat.js` projectCBT beroperasi harmonis dengan ExamBro tanpa false positive:
+- **`enforce_fullscreen`**: Karena ExamBro teridentifikasi sebagai ExamBrowser (`data-is-exambrowser="1"`), projectCBT langsung mengaktifkan sesi fullscreen tanpa memblokir halaman dengan modal gerbang fullscreen (`fullscreenGate`).
+- **`detect_split_screen`**: Jendela ExamBro bersifat maximized borderless (`innerW/screenW = 1.0`, `innerH/screenH >= 0.96`), melampaui ambang batas rasio split-screen projectCBT (`> 0.78` dan `> 0.72`), sehingga tidak memicu false alarm split-screen.
+- **`detect_window_blur` & `detect_tab_switch`**: Saat pengawas memasukkan password atau ExamBro menampilkan overlay peringatan, flag `window.__louisvox_suppress_blur` dan `isAlarmOverlayActive()` aktif, sehingga event blur/visibility diabaikan dan siswa tidak terkena penalti strike palsu.
+
+### 4. Pelaporan Pelanggaran Dua Arah (Native OS -> projectCBT)
+Ketika modul keamanan ExamBro mendeteksi anomali di level sistem operasi Windows, peristiwa tersebut langsung dilaporkan ke server projectCBT secara real-time:
+- **Proses Terlarang (Cheat Engine, Sniffer, VM)**: ExamBro memanggil `window.__cbtReportSevereViolation('Aplikasi terlarang terdeteksi di Windows: ...')` untuk mencatat pelanggaran berat `severe_unpin` di database audit `exam_violation_logs` dan menampilkan status di dashboard pengawas.
+- **Monitor Ganda Terpasang**: ExamBro memanggil `window.__cbtReportViolation('multi_monitor', { reason: '...' })`.
+- **Fokus Jendela Direbut**: ExamBro memanggil `window.__cbtReportViolation('window_blur', { reason: '...' })`.
+- **Akses Clipboard Ilegal**: ExamBro memanggil `window.__cbtReportViolation('clipboard_action', { reason: '...' })`.
 
 ---
 

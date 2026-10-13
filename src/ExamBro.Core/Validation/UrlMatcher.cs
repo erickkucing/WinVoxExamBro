@@ -90,13 +90,24 @@ public static class UrlMatcher
 
     /// <summary>
     /// Check whether a URL matches the configured exit-URL pattern.
+    /// Also supports projectCBT routes (/exam/finished/...) automatically.
     /// </summary>
     public static bool MatchesExitUrl(string url, string? exitPattern)
     {
-        if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(exitPattern))
+        if (string.IsNullOrEmpty(url))
             return false;
 
-        return IsMatch(url, exitPattern);
+        if (!string.IsNullOrEmpty(exitPattern) && IsMatch(url, exitPattern))
+            return true;
+
+        // Built-in fallback: projectCBT standard finished routes
+        if (url.Contains("/exam/finished/", StringComparison.OrdinalIgnoreCase) ||
+            url.Contains("/selesai", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -120,14 +131,14 @@ public static class UrlMatcher
     }
 
     /// <summary>
-    /// Extract the host from a URL and build a wildcard pattern that
-    /// allows all paths on that host over HTTPS.
+    /// Extract the host and port (authority) from a URL and build a wildcard pattern that
+    /// allows all paths on that host.
     /// </summary>
     public static string BuildHostPattern(string url)
     {
         if (Uri.TryCreate(url, UriKind.Absolute, out Uri? uri))
         {
-            return $"https://{uri.Host}/*";
+            return $"{uri.Scheme}://{uri.Authority}/*";
         }
         return url;
     }
