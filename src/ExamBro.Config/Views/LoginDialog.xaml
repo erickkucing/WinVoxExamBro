@@ -1,0 +1,89 @@
+<Window x:Class="ExamBro.Config.Views.LoginDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Masuk Administrator - ExamBro"
+        Height="420" Width="440"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        Background="{StaticResource BackgroundBrush}">
+    <Border Padding="28">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Logo & Title Header -->
+            <StackPanel Grid.Row="0" HorizontalAlignment="Center" Margin="0,0,0,24">
+                <Border Width="56" Height="56" CornerRadius="28" Background="{StaticResource PrimaryBrush}" HorizontalAlignment="Center" Margin="0,0,0,10">
+                    <TextBlock Text="🛡" FontSize="28" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <TextBlock Text="ExamBro Configurator" 
+                           FontSize="20" 
+                           FontWeight="Bold" 
+                           Foreground="{StaticResource PrimaryDarkBrush}" 
+                           HorizontalAlignment="Center"/>
+                <TextBlock Text="Panel Pengaturan Administrator" 
+                           FontSize="12" 
+                           Foreground="{StaticResource SecondaryTextBrush}" 
+                           HorizontalAlignment="Center" 
+                           Margin="0,2,0,0"/>
+            </StackPanel>
+
+            <!-- Input Area -->
+            <StackPanel Grid.Row="1" VerticalAlignment="Center">
+                <TextBlock Text="Password Administrator:" 
+                           FontWeight="SemiBold" 
+                           Margin="0,0,0,4"/>
+                <PasswordBox x:Name="TxtPassword" 
+                             Height="34" 
+                             Margin="0,0,0,8" 
+                             KeyDown="TxtPassword_KeyDown"
+                             PasswordChanged="TxtPassword_PasswordChanged"/>
+
+                <TextBlock x:Name="TxtAttemptsInfo" 
+                           Text="Batas percobaan: 5 kali" 
+                           FontSize="11" 
+                           Foreground="{StaticResource SecondaryTextBrush}" 
+                           Margin="0,0,0,6"/>
+
+                <TextBlock x:Name="TxtError" 
+                           Foreground="{StaticResource ErrorBrush}" 
+                           FontSize="12" 
+                           TextWrapping="Wrap" 
+                           Margin="0,0,0,8" 
+                           Visibility="Collapsed"/>
+
+                <TextBlock x:Name="TxtLockoutMessage" 
+                           Foreground="{StaticResource WarningBrush}" 
+                           FontSize="12" 
+                           FontWeight="SemiBold" 
+                           TextWrapping="Wrap" 
+                           Margin="0,0,0,8" 
+                           Visibility="Collapsed"/>
+            </StackPanel>
+
+            <!-- Action Buttons -->
+            <Grid Grid.Row="2" Margin="0,12,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <Button Content="Batal / Keluar" 
+                        Grid.Column="0" 
+                        Style="{StaticResource SecondaryButton}" 
+                        Margin="0,0,6,0" 
+                        Click="BtnCancel_Click"/>
+
+                <Button x:Name="BtnLogin" 
+                        Content="Masuk" 
+                        Grid.Column="1" 
+                        Style="{StaticResource PrimaryButton}" 
+                        Margin="6,0,0,0" 
+                        Click="BtnLogin_Click"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

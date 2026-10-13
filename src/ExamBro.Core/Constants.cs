@@ -1,0 +1,84 @@
+namespace ExamBro.Core;
+
+/// <summary>
+/// Application-wide constants for ExamBro.
+/// </summary>
+public static class Constants
+{
+    public const string AppVersion = "1.0.0";
+    public const string AppName = "ExamBro";
+
+    /// <summary>Named mutex to enforce single-instance execution.</summary>
+    public const string MutexName = @"Global\ExamBro_SingleInstance_Mutex";
+
+    /// <summary>AES-256-GCM nonce length in bytes.</summary>
+    public const int NonceLength = 12;
+
+    /// <summary>AES-256-GCM tag length in bytes.</summary>
+    public const int TagLength = 16;
+
+    /// <summary>AES-256 key length in bytes.</summary>
+    public const int KeyLength = 32;
+
+    /// <summary>PBKDF2 iteration count — meets OWASP 2024 recommendation.</summary>
+    public const int PasswordIterations = 310_000;
+
+    /// <summary>Salt length for password hashing.</summary>
+    public const int SaltLength = 16;
+
+    /// <summary>Binary version stamp written at the head of every encrypted config blob.</summary>
+    public const int ConfigVersion = 1;
+
+    /// <summary>Suffix appended to the WebView2 User-Agent string.</summary>
+    public const string UserAgentSuffix = " ExamBro/1.0.0";
+
+    /// <summary>Default keyboard shortcut to request exam exit.</summary>
+    public const string DefaultExitShortcut = "Ctrl+Shift+Q";
+
+    /// <summary>Environment variable that activates dev-safe mode.</summary>
+    public const string DevSafeEnvVar = "EXAMBRO_DEV";
+
+    /// <summary>Application-specific entropy fed into DPAPI to isolate the master key.</summary>
+    public static readonly byte[] AppEntropy =
+    {
+        0x45, 0x78, 0x61, 0x6D, 0x42, 0x72, 0x6F, 0x5F,
+        0x53, 0x65, 0x63, 0x75, 0x72, 0x65, 0x5F, 0x4B,
+        0x65, 0x79, 0x5F, 0x45, 0x6E, 0x74, 0x72, 0x6F,
+        0x70, 0x79, 0x5F, 0x56, 0x31, 0x2E, 0x30, 0x2E
+    };
+
+    /// <summary>Config file path under ProgramData.</summary>
+    public static string ConfigFilePath =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            AppName, "exambro.cfg");
+
+    /// <summary>Crash-recovery state file under LocalAppData.</summary>
+    public static string RecoveryFilePath =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            AppName, "recovery.json");
+
+    /// <summary>WebView2 user data folder (InPrivate sessions).</summary>
+    public static string WebView2DataFolder =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            AppName, "WebView2Profile");
+
+    /// <summary>Rolling log folder under ProgramData.</summary>
+    public static string LogFolder =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            AppName, "logs");
+
+    /// <summary>DPAPI-protected master key store.</summary>
+    public static string KeystorePath =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            AppName, "keystore");
+
+    /// <summary>Registry path for user-level policies set during kiosk lock.</summary>
+    public const string PolicyRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Policies";
+    public const string SystemPolicySubKey = @"Software\Microsoft\Windows\CurrentVersion\Policies\System";
+    public const string ExplorerPolicySubKey = @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
+}

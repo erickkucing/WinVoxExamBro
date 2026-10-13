@@ -1,0 +1,246 @@
+<Window x:Class="ExamBro.Config.Views.SetupWizardDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Wisaya Konfigurasi Awal - ExamBro"
+        Height="540" Width="680"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        Background="{StaticResource BackgroundBrush}">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="70"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="60"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Border Grid.Row="0" Background="{StaticResource PrimaryBrush}" Padding="20,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                    <TextBlock x:Name="TxtHeaderTitle" 
+                               Text="Wisaya Konfigurasi ExamBro" 
+                               FontSize="16" 
+                               FontWeight="Bold" 
+                               Foreground="White"/>
+                    <TextBlock x:Name="TxtHeaderSubtitle" 
+                               Text="Langkah 1 dari 5: Selamat Datang" 
+                               FontSize="12" 
+                               Foreground="#BBDEFB" 
+                               Margin="0,2,0,0"/>
+                </StackPanel>
+                <TextBlock Grid.Column="1" 
+                           Text="⚙" 
+                           FontSize="28" 
+                           Foreground="White" 
+                           VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <!-- Body / Step Panels -->
+        <Border Grid.Row="1" Background="White" Margin="16" CornerRadius="4" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="24">
+            <Grid>
+                <!-- Step 1: Welcome -->
+                <Grid x:Name="PanelStep1" Visibility="Visible">
+                    <StackPanel VerticalAlignment="Center">
+                        <Border Width="60" Height="60" CornerRadius="30" Background="#E3F2FD" HorizontalAlignment="Center" Margin="0,0,0,16">
+                            <TextBlock Text="🚀" FontSize="30" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <TextBlock Text="Selamat Datang di ExamBro" 
+                                   FontSize="20" 
+                                   FontWeight="Bold" 
+                                   Foreground="{StaticResource PrimaryBrush}" 
+                                   HorizontalAlignment="Center" 
+                                   Margin="0,0,0,10"/>
+                        <TextBlock Text="ExamBro adalah peramban ujian aman (kiosk browser) dengan proteksi integritas tinggi untuk pelaksanaan ujian berbasis komputer (CBT)." 
+                                   TextWrapping="Wrap" 
+                                   TextAlignment="Center" 
+                                   FontSize="13" 
+                                   Foreground="{StaticResource TextBrush}" 
+                                   LineHeight="20" 
+                                   Margin="20,0,20,16"/>
+                        <Border Background="#F5F5F5" Padding="14" CornerRadius="4" Margin="20,0,20,0">
+                            <TextBlock Text="Wisaya ini akan memandu Anda mengatur:&#x0a;• Password Administrator (untuk pengaturan)&#x0a;• Password Pengawas (untuk izin darurat di ruang ujian)&#x0a;• Alamat URL Ujian Utama (Start URL)" 
+                                       FontSize="12" 
+                                       LineHeight="20" 
+                                       Foreground="{StaticResource SecondaryTextBrush}"/>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Step 2: Admin Password -->
+                <Grid x:Name="PanelStep2" Visibility="Collapsed">
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Atur Password Administrator" 
+                                   FontSize="18" 
+                                   FontWeight="Bold" 
+                                   Foreground="{StaticResource PrimaryBrush}" 
+                                   Margin="0,0,0,6"/>
+                        <TextBlock Text="Password ini digunakan untuk masuk ke aplikasi konfigurasi ExamBro. Harap simpan password ini dengan aman." 
+                                   TextWrapping="Wrap" 
+                                   FontSize="13" 
+                                   Foreground="{StaticResource SecondaryTextBrush}" 
+                                   Margin="0,0,0,16"/>
+
+                        <TextBlock Text="Password Admin Baru (minimal 6 karakter):" FontWeight="SemiBold" Margin="0,0,0,2"/>
+                        <PasswordBox x:Name="TxtAdminPassword" Height="32" Margin="0,0,0,10"/>
+
+                        <TextBlock Text="Konfirmasi Password Admin:" FontWeight="SemiBold" Margin="0,0,0,2"/>
+                        <PasswordBox x:Name="TxtAdminPasswordConfirm" Height="32" Margin="0,0,0,10"/>
+
+                        <TextBlock x:Name="TxtAdminError" 
+                                   Foreground="{StaticResource ErrorBrush}" 
+                                   FontSize="12" 
+                                   TextWrapping="Wrap" 
+                                   Visibility="Collapsed"/>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Step 3: Proctor Password -->
+                <Grid x:Name="PanelStep3" Visibility="Collapsed">
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Atur Password Pengawas (Proctor)" 
+                                   FontSize="18" 
+                                   FontWeight="Bold" 
+                                   Foreground="{StaticResource PrimaryBrush}" 
+                                   Margin="0,0,0,6"/>
+                        <TextBlock Text="Password ini digunakan oleh pengawas di ruang ujian jika peserta membutuhkan keluar darurat atau membuka kunci ujian." 
+                                   TextWrapping="Wrap" 
+                                   FontSize="13" 
+                                   Foreground="{StaticResource SecondaryTextBrush}" 
+                                   Margin="0,0,0,16"/>
+
+                        <TextBlock Text="Password Pengawas Baru (minimal 6 karakter):" FontWeight="SemiBold" Margin="0,0,0,2"/>
+                        <PasswordBox x:Name="TxtProctorPassword" Height="32" Margin="0,0,0,10"/>
+
+                        <TextBlock Text="Konfirmasi Password Pengawas:" FontWeight="SemiBold" Margin="0,0,0,2"/>
+                        <PasswordBox x:Name="TxtProctorPasswordConfirm" Height="32" Margin="0,0,0,10"/>
+
+                        <TextBlock x:Name="TxtProctorError" 
+                                   Foreground="{StaticResource ErrorBrush}" 
+                                   FontSize="12" 
+                                   TextWrapping="Wrap" 
+                                   Visibility="Collapsed"/>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Step 4: Start URL -->
+                <Grid x:Name="PanelStep4" Visibility="Collapsed">
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Tentukan URL Halaman Ujian" 
+                                   FontSize="18" 
+                                   FontWeight="Bold" 
+                                   Foreground="{StaticResource PrimaryBrush}" 
+                                   Margin="0,0,0,6"/>
+                        <TextBlock Text="Alamat web portal ujian yang akan langsung dimuat saat ExamBro dijalankan." 
+                                   TextWrapping="Wrap" 
+                                   FontSize="13" 
+                                   Foreground="{StaticResource SecondaryTextBrush}" 
+                                   Margin="0,0,0,16"/>
+
+                        <TextBlock Text="Start URL (harus diawali http:// atau https://):" FontWeight="SemiBold" Margin="0,0,0,2"/>
+                        <TextBox x:Name="TxtStartUrl" 
+                                 Text="https://ujian.contoh.sch.id/login" 
+                                 FontFamily="Consolas" 
+                                 FontSize="13" 
+                                 Height="32" 
+                                 Margin="0,0,0,10"/>
+
+                        <CheckBox x:Name="ChkAutoAllowHost" 
+                                  Content="Otomatis izinkan seluruh pola path dari domain host ini" 
+                                  IsChecked="True" 
+                                  Margin="0,4,0,10"/>
+
+                        <TextBlock x:Name="TxtUrlError" 
+                                   Foreground="{StaticResource ErrorBrush}" 
+                                   FontSize="12" 
+                                   TextWrapping="Wrap" 
+                                   Visibility="Collapsed"/>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Step 5: Summary -->
+                <Grid x:Name="PanelStep5" Visibility="Collapsed">
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Ringkasan Konfigurasi Awal" 
+                                   FontSize="18" 
+                                   FontWeight="Bold" 
+                                   Foreground="{StaticResource PrimaryBrush}" 
+                                   Margin="0,0,0,6"/>
+                        <TextBlock Text="Konfigurasi siap dibuat dan disimpan dengan profil keamanan standar berikut:" 
+                                   FontSize="13" 
+                                   Foreground="{StaticResource SecondaryTextBrush}" 
+                                   Margin="0,0,0,14"/>
+
+                        <Border Background="#F9F9F9" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="14" CornerRadius="4">
+                            <StackPanel>
+                                <Grid Margin="0,0,0,6">
+                                    <TextBlock Text="Start URL:" FontWeight="SemiBold" Width="140" HorizontalAlignment="Left"/>
+                                    <TextBlock x:Name="TxtSummaryUrl" Margin="140,0,0,0" TextWrapping="Wrap" FontFamily="Consolas"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,6">
+                                    <TextBlock Text="Password Admin:" FontWeight="SemiBold" Width="140" HorizontalAlignment="Left"/>
+                                    <TextBlock Text="✓ Telah dikonfigurasi (PBKDF2-SHA256)" Foreground="{StaticResource SuccessBrush}" Margin="140,0,0,0"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,6">
+                                    <TextBlock Text="Password Pengawas:" FontWeight="SemiBold" Width="140" HorizontalAlignment="Left"/>
+                                    <TextBlock Text="✓ Telah dikonfigurasi (PBKDF2-SHA256)" Foreground="{StaticResource SuccessBrush}" Margin="140,0,0,0"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,6">
+                                    <TextBlock Text="Mode Kios &amp; Proteksi:" FontWeight="SemiBold" Width="140" HorizontalAlignment="Left"/>
+                                    <TextBlock Text="Aktif (Layar penuh, Anti-Screenshot, Blokir VM/RDP)" Margin="140,0,0,0"/>
+                                </Grid>
+                                <Grid>
+                                    <TextBlock Text="Shortcut Keluar:" FontWeight="SemiBold" Width="140" HorizontalAlignment="Left"/>
+                                    <TextBlock Text="Ctrl+Shift+Q" Margin="140,0,0,0"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="Klik 'Selesai' untuk menyimpan dan membuka panel konfigurasi utama." 
+                                   FontSize="12" 
+                                   Foreground="{StaticResource SecondaryTextBrush}" 
+                                   Margin="0,12,0,0"/>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </Border>
+
+        <!-- Bottom Controls -->
+        <Border Grid.Row="2" Background="#F5F5F5" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="16,10">
+            <Grid>
+                <Button Content="Batal" 
+                        HorizontalAlignment="Left" 
+                        Style="{StaticResource SecondaryButton}" 
+                        Width="80" 
+                        Click="BtnCancel_Click"/>
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="BtnBack" 
+                            Content="Kembali" 
+                            Style="{StaticResource SecondaryButton}" 
+                            Width="90" 
+                            Margin="0,0,8,0" 
+                            IsEnabled="False" 
+                            Click="BtnBack_Click"/>
+
+                    <Button x:Name="BtnNext" 
+                            Content="Lanjut" 
+                            Style="{StaticResource PrimaryButton}" 
+                            Width="90" 
+                            Click="BtnNext_Click"/>
+
+                    <Button x:Name="BtnFinish" 
+                            Content="Selesai" 
+                            Style="{StaticResource PrimaryButton}" 
+                            Width="90" 
+                            Visibility="Collapsed" 
+                            Click="BtnFinish_Click"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

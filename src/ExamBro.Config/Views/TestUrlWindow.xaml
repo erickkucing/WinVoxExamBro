@@ -1,0 +1,68 @@
+<Window x:Class="ExamBro.Config.Views.TestUrlWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="Uji Akses Start URL - ExamBro"
+        Height="650" Width="1000"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource BackgroundBrush}">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Top URL Bar -->
+        <Border Grid.Row="0" Background="#FFFFFF" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="12,8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0" 
+                           Text="URL:" 
+                           FontWeight="SemiBold" 
+                           VerticalAlignment="Center" 
+                           Margin="0,0,10,0"/>
+
+                <TextBox x:Name="TxtUrl" 
+                         Grid.Column="1" 
+                         VerticalAlignment="Center" 
+                         Margin="0,0,10,0" 
+                         FontSize="13" 
+                         FontFamily="Consolas"
+                         KeyDown="TxtUrl_KeyDown"/>
+
+                <Button x:Name="BtnNavigate" 
+                        Grid.Column="2" 
+                        Content="Muat Ulang" 
+                        Style="{StaticResource PrimaryButton}" 
+                        Margin="0,0,8,0" 
+                        Click="BtnNavigate_Click"/>
+
+                <Button x:Name="BtnClose" 
+                        Grid.Column="3" 
+                        Content="Tutup" 
+                        Style="{StaticResource SecondaryButton}" 
+                        Click="BtnClose_Click"/>
+            </Grid>
+        </Border>
+
+        <!-- WebView2 Browser Area -->
+        <wv2:WebView2 x:Name="webView" Grid.Row="1"/>
+
+        <!-- Bottom StatusBar -->
+        <StatusBar Grid.Row="2" Background="#EEEEEE" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="8,4">
+            <StatusBarItem>
+                <ProgressBar x:Name="LoadProgress" Width="100" Height="14" IsIndeterminate="True" Visibility="Collapsed"/>
+            </StatusBarItem>
+            <StatusBarItem>
+                <TextBlock x:Name="TxtStatus" Text="Menunggu inisialisasi browser..." FontSize="12" Foreground="{StaticResource TextBrush}"/>
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window>

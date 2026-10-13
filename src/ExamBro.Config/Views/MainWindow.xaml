@@ -1,0 +1,591 @@
+<Window x:Class="ExamBro.Config.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:ExamBro.Config.ViewModels"
+        Title="ExamBro - Pengaturan &amp; Konfigurasi Ujian"
+        Height="720" Width="1040"
+        MinHeight="600" MinWidth="850"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource BackgroundBrush}">
+    
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Top Header Banner -->
+        <Border Grid.Row="0" Background="{StaticResource PrimaryBrush}" Padding="20,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="ExamBro Configuration Manager" FontSize="18" FontWeight="Bold" Foreground="White"/>
+                    <TextBlock Text="Konfigurasi Keamanan Kiosk Browser &amp; Kebijakan Ujian Berbasis Komputer" FontSize="12" Foreground="#BBDEFB" Margin="0,2,0,0"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Content="Uji Start URL" Command="{Binding TestUrlCommand}" Style="{StaticResource SecondaryButton}" Margin="0,0,10,0"/>
+                    <Button Content="Simpan Konfigurasi" Command="{Binding SaveCommand}" Style="{StaticResource PrimaryButton}" Background="#2E7D32"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Main Tab Control -->
+        <TabControl Grid.Row="1" Margin="12,10,12,6">
+            
+            <!-- TAB 1: UMUM -->
+            <TabItem Header="Umum">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="12">
+                    <StackPanel>
+                        <!-- GroupBox Pengaturan Umum -->
+                        <GroupBox Header="Pengaturan Umum Aplikasi">
+                            <StackPanel Margin="6">
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="180"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Judul Jendela Aplikasi:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <TextBox Grid.Column="1" Text="{Binding AppTitle, UpdateSourceTrigger=PropertyChanged}"/>
+                                </Grid>
+
+                                <Grid Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="180"/>
+                                        <ColumnDefinition Width="200"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Bahasa Antarmuka:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <ComboBox Grid.Column="1" ItemsSource="{Binding LanguageOptions}" SelectedItem="{Binding Language}"/>
+                                </Grid>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- GroupBox URL Ujian (Prominent) -->
+                        <GroupBox Header="URL Halaman Ujian (Start URL)">
+                            <Border Background="#E8EAF6" BorderBrush="{StaticResource AccentBrush}" BorderThickness="1" CornerRadius="4" Padding="12" Margin="4">
+                                <StackPanel>
+                                    <TextBlock Text="Alamat URL Halaman Awal Ujian:" FontWeight="Bold" Margin="0,0,0,4"/>
+                                    <TextBox Text="{Binding StartUrl, UpdateSourceTrigger=PropertyChanged}" 
+                                             FontFamily="Consolas" 
+                                             FontSize="14" 
+                                             FontWeight="SemiBold" 
+                                             Padding="8,6" 
+                                             Margin="0,0,0,10"/>
+
+                                    <TextBlock Text="Opsi URL &amp; Parameter Dinamis:" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                    <CheckBox Content="Tambahkan placeholder username ({username}) ke URL" 
+                                              IsChecked="{Binding PlaceholderUsername}"/>
+                                    <CheckBox Content="Tambahkan placeholder nama perangkat ({machine}) ke URL" 
+                                              IsChecked="{Binding PlaceholderMachine}"/>
+                                    <CheckBox Content="Izinkan override URL via argumen baris perintah (--url)" 
+                                              IsChecked="{Binding AllowCommandLineOverride}"/>
+                                </StackPanel>
+                            </Border>
+                        </GroupBox>
+
+                        <!-- GroupBox Tampilan -->
+                        <GroupBox Header="Tampilan &amp; Antarmuka Pengguna">
+                            <StackPanel Margin="6">
+                                <CheckBox Content="Tampilkan toolbar navigasi atas pada jendela ujian" 
+                                          IsChecked="{Binding ShowToolbar}" 
+                                          Margin="0,0,0,10"/>
+
+                                <TextBlock Text="Berkas Logo Lembaga / Sekolah:" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                <Grid Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Text="{Binding LogoPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
+                                    <Button Grid.Column="1" Content="Telusuri..." Style="{StaticResource SecondaryButton}" Command="{Binding BrowseLogoCommand}"/>
+                                </Grid>
+                            </StackPanel>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- TAB 2: NAVIGASI & URL -->
+            <TabItem Header="Navigasi &amp; URL">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="12">
+                    <StackPanel>
+                        <!-- Top Action button -->
+                        <Button Content="🔍 Uji Akses Start URL di Jendela Sandbox" 
+                                Command="{Binding TestUrlCommand}" 
+                                Style="{StaticResource PrimaryButton}" 
+                                HorizontalAlignment="Left" 
+                                Margin="0,0,0,12"/>
+
+                        <!-- Whitelist URL -->
+                        <GroupBox Header="Whitelist URL (Pola Alamat yang Diizinkan)">
+                            <StackPanel Margin="6">
+                                <TextBlock Text="Hanya URL yang cocok dengan pola whitelist yang dapat dibuka oleh peramban peserta ujian." 
+                                           FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" Margin="0,0,0,6"/>
+                                <ListBox ItemsSource="{Binding AllowedUrlPatterns}" 
+                                         SelectedItem="{Binding SelectedAllowedPattern}" 
+                                         Height="110" 
+                                         Margin="0,0,0,8" 
+                                         FontFamily="Consolas"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Text="{Binding NewAllowedPattern, UpdateSourceTrigger=PropertyChanged}" 
+                                             Margin="0,0,8,0" 
+                                             FontFamily="Consolas"/>
+                                    <Button Grid.Column="1" 
+                                            Content="Tambah Pola" 
+                                            Style="{StaticResource PrimaryButton}" 
+                                            Margin="0,0,6,0" 
+                                            Command="{Binding AddAllowedPatternCommand}"/>
+                                    <Button Grid.Column="2" 
+                                            Content="Hapus Terpilih" 
+                                            Style="{StaticResource SecondaryButton}" 
+                                            Command="{Binding RemoveAllowedPatternCommand}"/>
+                                </Grid>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- Blacklist URL -->
+                        <GroupBox Header="Blacklist URL (Pola Alamat yang Diblokir)">
+                            <StackPanel Margin="6">
+                                <TextBlock Text="Pola URL yang selalu diblokir meskipun masuk dalam domain yang diizinkan." 
+                                           FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" Margin="0,0,0,6"/>
+                                <ListBox ItemsSource="{Binding BlockedUrlPatterns}" 
+                                         SelectedItem="{Binding SelectedBlockedPattern}" 
+                                         Height="90" 
+                                         Margin="0,0,0,8" 
+                                         FontFamily="Consolas"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Text="{Binding NewBlockedPattern, UpdateSourceTrigger=PropertyChanged}" 
+                                             Margin="0,0,8,0" 
+                                             FontFamily="Consolas"/>
+                                    <Button Grid.Column="1" 
+                                            Content="Tambah Pola" 
+                                            Style="{StaticResource PrimaryButton}" 
+                                            Margin="0,0,6,0" 
+                                            Command="{Binding AddBlockedPatternCommand}"/>
+                                    <Button Grid.Column="2" 
+                                            Content="Hapus Terpilih" 
+                                            Style="{StaticResource SecondaryButton}" 
+                                            Command="{Binding RemoveBlockedPatternCommand}"/>
+                                </Grid>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- Pengaturan Navigasi -->
+                        <GroupBox Header="Pengaturan Navigasi &amp; Siklus Selesai Ujian">
+                            <StackPanel Margin="6">
+                                <CheckBox Content="Otomatis izinkan seluruh pola path dari domain host Start URL" 
+                                          IsChecked="{Binding AutoAllowStartUrlHost}" 
+                                          Margin="0,0,0,8"/>
+
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="220"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Pola Exit URL (URL Selesai):" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <TextBox Grid.Column="1" Text="{Binding ExitUrlPattern, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"/>
+                                </Grid>
+
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="220"/>
+                                        <ColumnDefinition Width="100"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Otomatis Tutup Setelah (detik):" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <TextBox Grid.Column="1" Text="{Binding ExitUrlAutoCloseSeconds, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <TextBlock Grid.Column="2" Text="detik saat mencapai Exit URL" VerticalAlignment="Center" Margin="8,0,0,0" Foreground="{StaticResource SecondaryTextBrush}"/>
+                                </Grid>
+
+                                <TextBlock Text="Fitur Navigasi Browser:" FontWeight="SemiBold" Margin="0,4,0,4"/>
+                                <WrapPanel>
+                                    <CheckBox Content="Izinkan Back / Forward" IsChecked="{Binding AllowBackForward}" Margin="0,0,20,4"/>
+                                    <CheckBox Content="Izinkan Reload (Muat Ulang Halaman)" IsChecked="{Binding AllowReload}" Margin="0,0,20,4"/>
+                                    <CheckBox Content="Izinkan Mengunduh Berkas" IsChecked="{Binding AllowDownloads}" Margin="0,0,20,4"/>
+                                    <CheckBox Content="Izinkan Fitur Zoom" IsChecked="{Binding AllowZoom}" Margin="0,0,20,4"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- Izin Perangkat Browser -->
+                        <GroupBox Header="Izin Perangkat Keras Browser (Permissions)">
+                            <WrapPanel Margin="6">
+                                <CheckBox Content="Izinkan Kamera Web" IsChecked="{Binding AllowCamera}" Margin="0,0,24,4"/>
+                                <CheckBox Content="Izinkan Mikrofon" IsChecked="{Binding AllowMicrophone}" Margin="0,0,24,4"/>
+                                <CheckBox Content="Izinkan Geolokasi" IsChecked="{Binding AllowGeolocation}" Margin="0,0,24,4"/>
+                                <CheckBox Content="Izinkan Notifikasi Web" IsChecked="{Binding AllowNotifications}" Margin="0,0,24,4"/>
+                            </WrapPanel>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- TAB 3: KEAMANAN -->
+            <TabItem Header="Keamanan">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="12">
+                    <StackPanel>
+                        <!-- Mode Kios -->
+                        <GroupBox Header="Mode Kios &amp; Tampilan Layar">
+                            <StackPanel Margin="6">
+                                <CheckBox Content="Aktifkan Mode Kios Layar Penuh (Kiosk Mode)" 
+                                          IsChecked="{Binding KioskMode}" 
+                                          Margin="0,0,0,8"/>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="200"/>
+                                        <ColumnDefinition Width="260"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Kebijakan Multi Monitor:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <ComboBox Grid.Column="1" 
+                                              ItemsSource="{Binding MultiMonitorOptions}" 
+                                              SelectedItem="{Binding MultiMonitor}">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Converter={StaticResource EnumToStringConverter}}"/>
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                </Grid>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- Deteksi Lingkungan -->
+                        <GroupBox Header="Deteksi Lingkungan Virtual &amp; Jarak Jauh">
+                            <StackPanel Margin="6">
+                                <CheckBox Content="Blokir Lingkungan Mesin Virtual (VMware, VirtualBox, Hyper-V, QEMU)" 
+                                          IsChecked="{Binding BlockVirtualMachine}"/>
+                                <CheckBox Content="Blokir Sesi Remote Desktop (RDP, VNC, AnyDesk, TeamViewer)" 
+                                          IsChecked="{Binding BlockRemoteSession}"/>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- Proteksi & Integritas -->
+                        <GroupBox Header="Proteksi Sistem &amp; Antarmuka">
+                            <StackPanel Margin="6">
+                                <CheckBox Content="Izinkan Akses Clipboard Sistem Operasi" 
+                                          IsChecked="{Binding AllowClipboard}"/>
+                                <CheckBox Content="Izinkan Salin-Tempel (Copy-Paste) di Halaman Web" 
+                                          IsChecked="{Binding AllowCopyPaste}"/>
+                                <CheckBox Content="Proteksi Tangkapan Layar (WDA_MONITOR Anti-Screenshot / Layar Hitam)" 
+                                          IsChecked="{Binding ScreenCaptureProtection}"/>
+                                <CheckBox Content="Izinkan Pintasan Navigasi Keyboard Alt" 
+                                          IsChecked="{Binding AllowAltNavigation}"/>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- Proses Terlarang -->
+                        <GroupBox Header="Daftar Proses Terlarang (Process Blacklist)">
+                            <StackPanel Margin="6">
+                                <TextBlock Text="Aplikasi yang dicegah berjalan selama proses ujian berlangsung." 
+                                           FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" Margin="0,0,0,6"/>
+                                <ListBox ItemsSource="{Binding ProcessBlacklist}" 
+                                         SelectedItem="{Binding SelectedProcess}" 
+                                         Height="120" 
+                                         Margin="0,0,0,8" 
+                                         FontFamily="Consolas"/>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Text="{Binding NewProcess, UpdateSourceTrigger=PropertyChanged}" 
+                                             Margin="0,0,8,0" 
+                                             FontFamily="Consolas"/>
+                                    <Button Grid.Column="1" 
+                                            Content="Tambah Proses" 
+                                            Style="{StaticResource PrimaryButton}" 
+                                            Margin="0,0,6,0" 
+                                            Command="{Binding AddProcessCommand}"/>
+                                    <Button Grid.Column="2" 
+                                            Content="Hapus Terpilih" 
+                                            Style="{StaticResource SecondaryButton}" 
+                                            Command="{Binding RemoveProcessCommand}"/>
+                                </Grid>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="220"/>
+                                        <ColumnDefinition Width="240"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Tindakan Deteksi Proses:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <ComboBox Grid.Column="1" 
+                                              ItemsSource="{Binding ProcessActionOptions}" 
+                                              SelectedItem="{Binding ProcessAction}">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Converter={StaticResource EnumToStringConverter}}"/>
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
+                                </Grid>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- Pengaturan Lanjutan -->
+                        <GroupBox Header="Pengaturan Keamanan Lanjutan">
+                            <StackPanel Margin="6">
+                                <CheckBox Content="Hentikan Windows Explorer Shell (explorer.exe) selama ujian" 
+                                          IsChecked="{Binding KillExplorerShell}"/>
+                                <CheckBox Content="Terapkan Kebijakan Registry Penguncian (Blokir Task Manager, Switch User, Lock)" 
+                                          IsChecked="{Binding DisableRegistryPolicies}"/>
+                                <CheckBox Content="Izinkan Argumen --dev-safe pada Mode Rilis (Development Only)" 
+                                          IsChecked="{Binding DevSafeAllowedInRelease}"/>
+                            </StackPanel>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- TAB 4: PELANGGARAN -->
+            <TabItem Header="Pelanggaran">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Background="#FFF9C4" BorderBrush="#FBC02D" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,12">
+                        <TextBlock Text="Tentukan respon tindakan saat terjadi pelanggaran oleh peserta ujian. Ambang batas (threshold) menentukan berapa kali pelanggaran ditoleransi sebelum tindakan eskalasi diterapkan (0 = langsung eskalasi)." 
+                                   TextWrapping="Wrap" 
+                                   FontSize="12" 
+                                   Foreground="#5D4037"/>
+                    </Border>
+
+                    <DataGrid Grid.Row="1" 
+                              ItemsSource="{Binding ViolationRules}" 
+                              AutoGenerateColumns="False" 
+                              CanUserAddRows="False" 
+                              CanUserDeleteRows="False" 
+                              HeadersVisibility="Column" 
+                              GridLinesVisibility="Horizontal" 
+                              RowHeight="36" 
+                              FontSize="12">
+                        <DataGrid.Columns>
+                            <!-- Event Name (Read Only) -->
+                            <DataGridTextColumn Header="Jenis Kejadian / Pelanggaran" 
+                                                Binding="{Binding DisplayName}" 
+                                                IsReadOnly="True" 
+                                                Width="240"/>
+
+                            <!-- Action -->
+                            <DataGridTemplateColumn Header="Tindakan Awal" Width="190">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ComboBox SelectedItem="{Binding Action, UpdateSourceTrigger=PropertyChanged}" 
+                                                  ItemsSource="{Binding DataContext.ViolationActionOptions, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                                  VerticalAlignment="Center">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Converter={StaticResource EnumToStringConverter}}"/>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+
+                            <!-- Threshold -->
+                            <DataGridTextColumn Header="Ambang Batas Toleransi" 
+                                                Binding="{Binding Threshold, UpdateSourceTrigger=PropertyChanged}" 
+                                                Width="160"/>
+
+                            <!-- Escalation Action -->
+                            <DataGridTemplateColumn Header="Tindakan Eskalasi" Width="190">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ComboBox SelectedItem="{Binding Escalation, UpdateSourceTrigger=PropertyChanged}" 
+                                                  ItemsSource="{Binding DataContext.ViolationActionOptions, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                                  VerticalAlignment="Center">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Converter={StaticResource EnumToStringConverter}}"/>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+
+            <!-- TAB 5: ADMIN -->
+            <TabItem Header="Admin">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="12">
+                    <StackPanel>
+                        <!-- GroupBox Password -->
+                        <GroupBox Header="Autentikasi &amp; Kata Sandi">
+                            <StackPanel Margin="6">
+                                <TextBlock Text="Kata sandi diamankan menggunakan PBKDF2-HMAC-SHA256 dengan garam kriptografi acak." 
+                                           FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" Margin="0,0,0,10"/>
+                                <WrapPanel>
+                                    <Button Content="🔑 Ganti Password Admin..." 
+                                            Style="{StaticResource SecondaryButton}" 
+                                            Margin="0,0,12,6" 
+                                            Command="{Binding ChangeAdminPasswordCommand}"/>
+                                    <Button Content="🛡 Ganti Password Pengawas (Proctor)..." 
+                                            Style="{StaticResource SecondaryButton}" 
+                                            Margin="0,0,12,6" 
+                                            Command="{Binding ChangeProctorPasswordCommand}"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- GroupBox Shortcut Keluar & Lockout -->
+                        <GroupBox Header="Pintasan Keluar &amp; Perlindungan Kunci Otomatis">
+                            <StackPanel Margin="6">
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="220"/>
+                                        <ColumnDefinition Width="150"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Pintasan Keluar (Shortcut):" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <TextBox Grid.Column="1" Text="{Binding ExitShortcut, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"/>
+                                </Grid>
+
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="220"/>
+                                        <ColumnDefinition Width="100"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Batas Percobaan Password:" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <TextBox Grid.Column="1" Text="{Binding MaxPasswordAttempts, UpdateSourceTrigger=PropertyChanged}"/>
+                                </Grid>
+
+                                <Grid Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="220"/>
+                                        <ColumnDefinition Width="100"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Durasi Lockout (detik):" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <TextBox Grid.Column="1" Text="{Binding PasswordLockoutSeconds, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <TextBlock Grid.Column="2" Text="detik jeda setelah batas percobaan terlampaui" VerticalAlignment="Center" Margin="8,0,0,0" Foreground="{StaticResource SecondaryTextBrush}"/>
+                                </Grid>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- GroupBox Ekspor / Impor -->
+                        <GroupBox Header="Ekspor &amp; Impor Berkas Konfigurasi">
+                            <StackPanel Margin="6">
+                                <TextBlock Text="Konfigurasi dapat diekspor ke dalam berkas (.exbcfg) yang dienkripsi dengan kata sandi agar aman didistribusikan ke komputer klien ujian." 
+                                           TextWrapping="Wrap" 
+                                           FontSize="12" 
+                                           Foreground="{StaticResource SecondaryTextBrush}" 
+                                           Margin="0,0,0,10"/>
+                                <WrapPanel>
+                                    <Button Content="💾 Ekspor Konfigurasi (.exbcfg)..." 
+                                            Style="{StaticResource PrimaryButton}" 
+                                            Margin="0,0,12,6" 
+                                            Command="{Binding ExportCommand}"/>
+                                    <Button Content="📂 Impor Konfigurasi (.exbcfg)..." 
+                                            Style="{StaticResource SecondaryButton}" 
+                                            Margin="0,0,12,6" 
+                                            Command="{Binding ImportCommand}"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- TAB 6: LOG -->
+            <TabItem Header="Log">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="12">
+                    <StackPanel>
+                        <!-- Log Lokal -->
+                        <GroupBox Header="Pencatatan Log Lokal (Serilog)">
+                            <StackPanel Margin="6">
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="180"/>
+                                        <ColumnDefinition Width="200"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Tingkat Log (Log Level):" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                                    <ComboBox Grid.Column="1" ItemsSource="{Binding LogLevelOptions}" SelectedItem="{Binding LogLevel}"/>
+                                </Grid>
+
+                                <TextBlock Text="Direktori Berkas Log (Kosongkan untuk default ProgramData):" FontWeight="SemiBold" Margin="0,4,0,4"/>
+                                <Grid Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Text="{Binding LogPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
+                                    <Button Grid.Column="1" Content="Telusuri Direktori..." Style="{StaticResource SecondaryButton}" Command="{Binding BrowseLogPathCommand}"/>
+                                </Grid>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- Webhook Sink -->
+                        <GroupBox Header="Webhook Audit Jarak Jauh (Real-Time Security Logging)">
+                            <StackPanel Margin="6">
+                                <TextBlock Text="Kirim catatan pelanggaran dan event keamanan langsung ke server pusat pengawas melalui HTTP POST dengan tanda tangan HMAC." 
+                                           TextWrapping="Wrap" 
+                                           FontSize="12" 
+                                           Foreground="{StaticResource SecondaryTextBrush}" 
+                                           Margin="0,0,0,8"/>
+
+                                <TextBlock Text="Webhook Endpoint URL (HTTPS):" FontWeight="SemiBold" Margin="0,0,0,2"/>
+                                <TextBox Text="{Binding WebhookUrl, UpdateSourceTrigger=PropertyChanged}" 
+                                         FontFamily="Consolas" 
+                                         Margin="0,0,0,8"/>
+
+                                <TextBlock Text="Kunci Rahasia HMAC (Secret Key):" FontWeight="SemiBold" Margin="0,0,0,2"/>
+                                <TextBox Text="{Binding WebhookHmacKey, UpdateSourceTrigger=PropertyChanged}" 
+                                         FontFamily="Consolas" 
+                                         Margin="0,0,0,4"/>
+                            </StackPanel>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <!-- Bottom StatusBar -->
+        <Border Grid.Row="2" Background="#EEEEEE" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="12,6">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Save Button in StatusBar -->
+                <Button Grid.Column="0" 
+                        Content="💾 Simpan Konfigurasi" 
+                        Style="{StaticResource PrimaryButton}" 
+                        Padding="16,6" 
+                        Command="{Binding SaveCommand}"/>
+
+                <!-- Status Message -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                    <TextBlock Text="Status: " FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"/>
+                    <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource TextBrush}" FontWeight="Normal"/>
+                </StackPanel>
+
+                <!-- Hash Info -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="SHA256 Hash: " FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" FontSize="11"/>
+                    <TextBlock Text="{Binding ConfigHash}" FontFamily="Consolas" FontSize="11" Foreground="{StaticResource PrimaryDarkBrush}"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
