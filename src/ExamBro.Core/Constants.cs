@@ -47,9 +47,31 @@ public static class Constants
         0x70, 0x79, 0x5F, 0x56, 0x31, 0x2E, 0x30, 0x2E
     };
 
+    /// <summary>Directory of the running executable.</summary>
+    public static string AppDirectory
+    {
+        get
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(Environment.ProcessPath))
+                {
+                    string? dir = Path.GetDirectoryName(Environment.ProcessPath);
+                    if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                    {
+                        return dir;
+                    }
+                }
+            }
+            catch { }
+
+            return AppDomain.CurrentDomain.BaseDirectory;
+        }
+    }
+
     /// <summary>Portable config file path in the application directory.</summary>
     public static string PortableConfigPath =>
-        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "exambro.cfg");
+        Path.Combine(AppDirectory, "exambro.cfg");
 
     /// <summary>Installed system-wide config file path under ProgramData.</summary>
     public static string SystemConfigFilePath =>
@@ -65,18 +87,70 @@ public static class Constants
     {
         get
         {
-            string portable = PortableConfigPath;
-            if (File.Exists(portable))
+            // 1. Primary: exambro.cfg located in the application directory
+            string localPath = PortableConfigPath;
+            if (File.Exists(localPath))
             {
-                return portable;
+                return localPath;
             }
 
-            return SystemConfigFilePath;
+            // 2. Current working directory
+            try
+            {
+                string cwdPath = Path.Combine(Directory.GetCurrentDirectory(), "exambro.cfg");
+                if (File.Exists(cwdPath))
+                {
+                    return cwdPath;
+                }
+            }
+            catch { }
+
+            // 3. Parent / sibling directories if running in a modular build folder
+            try
+            {
+                string? parentDir = Directory.GetParent(AppDirectory)?.FullName;
+                if (!string.IsNullOrEmpty(parentDir))
+                {
+                    string parentPath = Path.Combine(parentDir, "exambro.cfg");
+                    if (File.Exists(parentPath))
+                    {
+                        return parentPath;
+                    }
+
+                    string siblingConfig = Path.Combine(parentDir, "ExamBro.Config", "exambro.cfg");
+                    if (File.Exists(siblingConfig))
+                    {
+                        return siblingConfig;
+                    }
+
+                    string siblingExam = Path.Combine(parentDir, "ExamBro.Exam", "exambro.cfg");
+                    if (File.Exists(siblingExam))
+                    {
+                        return siblingExam;
+                    }
+
+                    string siblingPortable = Path.Combine(parentDir, "portable", "WinVoxExamBro", "exambro.cfg");
+                    if (File.Exists(siblingPortable))
+                    {
+                        return siblingPortable;
+                    }
+                }
+            }
+            catch { }
+
+            // 4. System-wide ProgramData path (installed mode)
+            if (File.Exists(SystemConfigFilePath))
+            {
+                return SystemConfigFilePath;
+            }
+
+            // 5. Default fallback if not found anywhere: default to application directory (portable)
+            return PortableConfigPath;
         }
     }
 
     /// <summary>Indicates whether the application is running in portable mode with local config.</summary>
-    public static bool IsPortableMode => File.Exists(PortableConfigPath);
+    public static bool IsPortableMode => !ConfigFilePath.Equals(SystemConfigFilePath, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Crash-recovery state file under LocalAppData.</summary>
     public static string RecoveryFilePath =>
@@ -101,7 +175,7 @@ public static class Constants
                 return Path.Combine(localAppData, AppName, "logs");
             }
 
-            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
+            return Path.Combine(AppDirectory, "logs");
         }
     }
 
@@ -113,7 +187,7 @@ public static class Constants
     {
         get
         {
-            string localKeystore = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "keystore");
+            string localKeystore = Path.Combine(AppDirectory, "keystore");
             if (File.Exists(localKeystore))
             {
                 return localKeystore;

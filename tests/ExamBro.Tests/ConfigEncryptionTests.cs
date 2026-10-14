@@ -232,4 +232,33 @@ public class ConfigEncryptionTests
         Assert.True(decrypted.Audio.MuteAudio);
         Assert.Equal(45, decrypted.Audio.VolumePercent);
     }
+
+    [Fact]
+    public void PortableConfig_Priority_PrefersLocalAppDirectory()
+    {
+        string appDir = ExamBro.Core.Constants.AppDirectory;
+        Assert.False(string.IsNullOrWhiteSpace(appDir));
+        Assert.Equal(Path.Combine(appDir, "exambro.cfg"), ExamBro.Core.Constants.PortableConfigPath);
+
+        // When portable config exists, ConfigFilePath returns PortableConfigPath
+        string testPortableFile = ExamBro.Core.Constants.PortableConfigPath;
+        bool existedBefore = File.Exists(testPortableFile);
+        try
+        {
+            if (!existedBefore)
+            {
+                File.WriteAllText(testPortableFile, "dummy");
+            }
+
+            Assert.Equal(testPortableFile, ExamBro.Core.Constants.ConfigFilePath);
+            Assert.True(ExamBro.Core.Constants.IsPortableMode);
+        }
+        finally
+        {
+            if (!existedBefore && File.Exists(testPortableFile))
+            {
+                File.Delete(testPortableFile);
+            }
+        }
+    }
 }

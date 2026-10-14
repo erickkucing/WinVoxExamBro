@@ -157,15 +157,35 @@ public partial class App : Application
         {
             try
             {
-                string? dir = Path.GetDirectoryName(configPath);
+                string portablePath = Constants.PortableConfigPath;
+                string? dir = Path.GetDirectoryName(portablePath);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 {
                     Directory.CreateDirectory(dir);
                 }
 
-                byte[] encrypted = ConfigEncryption.EncryptConfig(wizard.Config);
-                File.WriteAllBytes(configPath, encrypted);
-                Log.Information("Konfigurasi baru berhasil disimpan ke {Path}", configPath);
+                byte[] encrypted = ConfigEncryption.EncryptPortableConfig(wizard.Config);
+                File.WriteAllBytes(portablePath, encrypted);
+                Log.Information("Konfigurasi baru berhasil disimpan ke folder program: {Path}", portablePath);
+
+                // Sinkronisasi backup ke ProgramData
+                try
+                {
+                    string sysPath = Constants.SystemConfigFilePath;
+                    if (!sysPath.Equals(portablePath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        string? sysDir = Path.GetDirectoryName(sysPath);
+                        if (!string.IsNullOrEmpty(sysDir) && !Directory.Exists(sysDir))
+                        {
+                            Directory.CreateDirectory(sysDir);
+                        }
+                        File.WriteAllBytes(sysPath, encrypted);
+                    }
+                }
+                catch (Exception sysEx)
+                {
+                    Log.Warning(sysEx, "Tidak dapat menulis cadangan konfigurasi ke ProgramData");
+                }
 
                 var mainWindow = new MainWindow(wizard.Config);
                 MainWindow = mainWindow;

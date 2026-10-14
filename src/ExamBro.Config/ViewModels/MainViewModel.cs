@@ -475,16 +475,16 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
 
-            string targetFile = Constants.ConfigFilePath;
-            string? directory = Path.GetDirectoryName(targetFile);
+            // 1. Prioritaskan penyimpanan portable langsung di folder program
+            string portableFile = Constants.PortableConfigPath;
+            string? directory = Path.GetDirectoryName(portableFile);
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
             {
                 Directory.CreateDirectory(directory);
             }
 
-            bool isPortable = Constants.IsPortableMode || targetFile.Equals(Constants.PortableConfigPath, StringComparison.OrdinalIgnoreCase);
-            byte[] encrypted = ConfigEncryption.EncryptConfig(config, portable: isPortable);
-            File.WriteAllBytes(targetFile, encrypted);
+            byte[] encrypted = ConfigEncryption.EncryptPortableConfig(config);
+            File.WriteAllBytes(portableFile, encrypted);
 
             if (!string.IsNullOrEmpty(directory))
             {
@@ -495,12 +495,32 @@ public partial class MainViewModel : ObservableObject
                 }
             }
 
+            // Sinkronisasi ke folder sibling jika ada (ExamBro.Exam / portable)
+            SyncToRelatedDirectories(config, encrypted);
+
+            // 2. Sinkronisasi cadangan ke ProgramData
+            try
+            {
+                string sysFile = Constants.SystemConfigFilePath;
+                string? sysDir = Path.GetDirectoryName(sysFile);
+                if (!string.IsNullOrEmpty(sysDir) && !Directory.Exists(sysDir))
+                {
+                    Directory.CreateDirectory(sysDir);
+                }
+                File.WriteAllBytes(sysFile, encrypted);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Tidak dapat menulis cadangan konfigurasi ke ProgramData");
+            }
+
             ConfigHash = ConfigEncryption.ComputeConfigHash(config);
-            StatusMessage = $"Konfigurasi berhasil disimpan! ({DateTime.Now:HH:mm:ss})";
-            Log.Information("Konfigurasi ExamBro berhasil disimpan ke {Path} (Portable={IsPortable})", targetFile, isPortable);
+            StatusMessage = $"Konfigurasi berhasil disimpan di folder program! ({DateTime.Now:HH:mm:ss})";
+            Log.Information("Konfigurasi ExamBro berhasil disimpan ke {Path}", portableFile);
 
             MessageBox.Show(
-                "Konfigurasi ExamBro berhasil disimpan dan dienkripsi dengan aman.",
+                $"Konfigurasi ExamBro berhasil disimpan langsung ke folder aplikasi:\n{portableFile}\n\n" +
+                "File 'exambro.cfg' tersimpan di folder program dan akan otomatis dibaca terlebih dahulu oleh ExamBro.",
                 "Simpan Berhasil",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -549,10 +569,15 @@ public partial class MainViewModel : ObservableObject
             }
 
             string targetFile = Constants.PortableConfigPath;
+            string? pDir = Path.GetDirectoryName(targetFile);
+            if (!string.IsNullOrEmpty(pDir) && !Directory.Exists(pDir))
+            {
+                Directory.CreateDirectory(pDir);
+            }
+
             byte[] encrypted = ConfigEncryption.EncryptPortableConfig(config);
             File.WriteAllBytes(targetFile, encrypted);
 
-            string? pDir = Path.GetDirectoryName(targetFile);
             if (!string.IsNullOrEmpty(pDir))
             {
                 byte[] logoBytes = BrandingHelper.ResolveLogoBytes(config.General.LogoBase64, config.General.LogoPath);
@@ -562,12 +587,33 @@ public partial class MainViewModel : ObservableObject
                 }
             }
 
+            // Sinkronisasi ke folder sibling jika ada (ExamBro.Exam / portable)
+            SyncToRelatedDirectories(config, encrypted);
+
+            // Sinkronisasi cadangan ke ProgramData
+            try
+            {
+                string sysFile = Constants.SystemConfigFilePath;
+                string? sysDir = Path.GetDirectoryName(sysFile);
+                if (!string.IsNullOrEmpty(sysDir) && !Directory.Exists(sysDir))
+                {
+                    Directory.CreateDirectory(sysDir);
+                }
+                File.WriteAllBytes(sysFile, encrypted);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Tidak dapat menulis cadangan konfigurasi ke ProgramData");
+            }
+
             ConfigHash = ConfigEncryption.ComputeConfigHash(config);
-            StatusMessage = $"Konfigurasi portable berhasil disimpan! ({DateTime.Now:HH:mm:ss})";
+            StatusMessage = $"Konfigurasi portable berhasil disimpan di folder program! ({DateTime.Now:HH:mm:ss})";
             Log.Information("Konfigurasi ExamBro portable berhasil disimpan ke {Path}", targetFile);
 
             MessageBox.Show(
-                $"Konfigurasi ExamBro versi Portable berhasil disimpan ke:\n{targetFile}\n\nFolder ini sekarang dapat langsung disalin ke komputer peserta ujian.",
+                $"Konfigurasi ExamBro versi Portable berhasil disimpan langsung ke folder aplikasi:\n{targetFile}\n\n" +
+                "File 'exambro.cfg' kini tersimpan di folder program dan akan otomatis dibaca terlebih dahulu oleh ExamBro.\n\n" +
+                "Folder ini sekarang dapat langsung disalin ke flashdisk atau komputer peserta ujian tanpa kehilangan konfigurasi.",
                 "Simpan Portable Berhasil",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -582,6 +628,51 @@ public partial class MainViewModel : ObservableObject
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
+    }
+
+    private void SyncToRelatedDirectories(ExamConfig config, byte[] encryptedBytes)
+    {
+        try
+        {
+            string appDir = Constants.AppDirectory;
+            string? parentDir = Directory.GetParent(appDir)?.FullName;
+            if (string.IsNullOrEmpty(parentDir)) return;
+
+            string[] siblingFolders = new[]
+            {
+                Path.Combine(parentDir, "ExamBro.Exam"),
+                Path.Combine(parentDir, "ExamBro"),
+                Path.Combine(parentDir, "portable", "WinVoxExamBro"),
+                Path.Combine(parentDir, "WinVoxExamBro"),
+                Path.Combine(parentDir, "dist", "ExamBro.Exam"),
+                Path.Combine(parentDir, "dist", "portable", "WinVoxExamBro")
+            };
+
+            byte[] logoBytes = BrandingHelper.ResolveLogoBytes(config.General.LogoBase64, config.General.LogoPath);
+
+            foreach (var folder in siblingFolders)
+            {
+                if (Directory.Exists(folder) && !folder.Equals(appDir, StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        string targetCfg = Path.Combine(folder, "exambro.cfg");
+                        File.WriteAllBytes(targetCfg, encryptedBytes);
+                        Log.Information("Sinkronisasi konfigurasi ke folder terkait: {Folder}", folder);
+
+                        if (logoBytes.Length > 0)
+                        {
+                            try { File.WriteAllBytes(Path.Combine(folder, "logo.png"), logoBytes); } catch { }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Debug(ex, "Gagal sinkronisasi ke folder {Folder}", folder);
+                    }
+                }
+            }
+        }
+        catch { }
     }
 
     [RelayCommand]
