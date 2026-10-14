@@ -17,14 +17,29 @@ public class ProcessMonitorService : IDisposable
     private static readonly ILogger Log = Serilog.Log.ForContext<ProcessMonitorService>();
 
     private readonly ExamConfig _config;
-    private readonly DispatcherTimer _timer;
+    private readonly Timer _timer;
     private readonly HashSet<string> _blacklist;
     private readonly int _currentPid;
+    private readonly int _currentSessionId;
+    private int _isScanning;
     private bool _disposed;
+
+    private static readonly HashSet<string> BackgroundSafeWindowsTools = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "cmd", "powershell", "pwsh", "wt", "taskmgr", "regedit", "mmc", "conhost", "wscript", "cscript"
+    };
 
     public event Action<string, int>? BlockedProcessDetected;
 
-    // ── Win32 P/Invoke Declarations ──────────────────────────────────────────
+    // Win32 P/Invoke Declarations
+
+    /// <summary>
+    /// Determines the visibility state of the specified window.
+    /// Used to distinguish interactive GUI/console sessions from headless background tasks.
+    /// </summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
 
     /// <summary>
     /// Takes a snapshot of the specified processes, as well as the heaps, modules, and threads used by these processes.
@@ -77,15 +92,20 @@ public class ProcessMonitorService : IDisposable
         _config = config;
         _currentPid = Environment.ProcessId;
 
+        try
+        {
+            _currentSessionId = Process.GetCurrentProcess().SessionId;
+        }
+        catch
+        {
+            _currentSessionId = -1;
+        }
+
         _blacklist = new HashSet<string>(
             config.Security.ProcessBlacklist.Select(NormalizeProcessName),
             StringComparer.OrdinalIgnoreCase);
 
-        _timer = new DispatcherTimer(DispatcherPriority.Background)
-        {
-            Interval = TimeSpan.FromSeconds(1)
-        };
-        _timer.Tick += (s, e) => ScanProcesses();
+        _timer = new Timer(OnTimerTick, null, Timeout.Infinite, Timeout.Infinite);
     }
 
     /// <summary>
@@ -94,8 +114,7 @@ public class ProcessMonitorService : IDisposable
     public void Start()
     {
         Log.Information("Starting ProcessMonitorService with {BlacklistCount} blacklisted signatures", _blacklist.Count);
-        _timer.Start();
-        ScanProcesses(); // Immediate initial scan
+        _timer.Change(0, 1500);
     }
 
     /// <summary>
@@ -103,13 +122,31 @@ public class ProcessMonitorService : IDisposable
     /// </summary>
     public void Stop()
     {
-        _timer.Stop();
+        _timer.Change(Timeout.Infinite, Timeout.Infinite);
         Log.Information("ProcessMonitorService stopped");
+    }
+
+    private void OnTimerTick(object? state)
+    {
+        if (Interlocked.CompareExchange(ref _isScanning, 1, 0) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            ScanProcesses();
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _isScanning, 0);
+        }
     }
 
     /// <summary>
     /// Performs a one-time check of running processes against the blacklist.
     /// Returns any currently running offending process names.
+    /// Excludes headless background tasks without active interactive user windows.
     /// </summary>
     public List<string> CheckRunningBlacklist()
     {
@@ -134,12 +171,19 @@ public class ProcessMonitorService : IDisposable
                 if (proc.Id == _currentPid) continue;
                 if (childPids.Contains(proc.Id)) continue;
 
-                string procName = NormalizeProcessName(proc.ProcessName);
+                string rawName = proc.ProcessName;
+                string procName = NormalizeProcessName(rawName);
 
-                // If it is msedgewebview2 but belongs to another process, or blacklisted
-                if (_blacklist.Contains(procName))
+                // Skip legitimate WebView2 child processes created by this instance
+                if (procName.Equals("msedgewebview2", StringComparison.OrdinalIgnoreCase) &&
+                    childPids.Contains(proc.Id))
                 {
-                    violatingProcesses.Add(proc.ProcessName);
+                    continue;
+                }
+
+                if (IsActiveOffendingProcess(proc, procName))
+                {
+                    violatingProcesses.Add(rawName);
                 }
             }
             catch
@@ -153,6 +197,118 @@ public class ProcessMonitorService : IDisposable
         }
 
         return violatingProcesses.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// Forcefully terminates all currently detected active offending processes.
+    /// Returns the number of processes successfully killed.
+    /// </summary>
+    public int KillOffendingProcesses()
+    {
+        int killedCount = 0;
+        var childPids = GetDescendantPids(_currentPid);
+
+        Process[] processes;
+        try
+        {
+            processes = Process.GetProcesses();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to enumerate running processes for auto-kill");
+            return 0;
+        }
+
+        foreach (var proc in processes)
+        {
+            try
+            {
+                if (proc.Id == _currentPid) continue;
+                if (childPids.Contains(proc.Id)) continue;
+
+                string rawName = proc.ProcessName;
+                string procName = NormalizeProcessName(rawName);
+
+                // Skip legitimate WebView2 child processes created by this instance
+                if (procName.Equals("msedgewebview2", StringComparison.OrdinalIgnoreCase) &&
+                    childPids.Contains(proc.Id))
+                {
+                    continue;
+                }
+
+                if (IsActiveOffendingProcess(proc, procName))
+                {
+                    try
+                    {
+                        proc.Kill(true);
+                        killedCount++;
+                        Log.Information("Terminated prohibited process: {ProcessName} (PID: {Pid})", rawName, proc.Id);
+                    }
+                    catch (Exception killEx)
+                    {
+                        Log.Warning(killEx, "Failed to kill prohibited process {ProcessName} (PID: {Pid})", rawName, proc.Id);
+                    }
+                }
+            }
+            catch
+            {
+                // Process may have exited
+            }
+            finally
+            {
+                proc.Dispose();
+            }
+        }
+
+        return killedCount;
+    }
+
+    /// <summary>
+    /// Checks whether a running process is an active offending process that poses a security violation.
+    /// For standard Windows built-in tools (cmd, powershell, taskmgr, etc.), ignores headless
+    /// background tasks that have no interactive window in the current desktop session.
+    /// </summary>
+    private bool IsActiveOffendingProcess(Process proc, string normalizedName)
+    {
+        if (!_blacklist.Contains(normalizedName))
+        {
+            return false;
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            // Check session ID: ignore services or other user sessions
+            if (_currentSessionId >= 0)
+            {
+                try
+                {
+                    if (proc.SessionId != _currentSessionId)
+                    {
+                        return false;
+                    }
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            // Check window visibility: interactive tools have a visible top-level window
+            try
+            {
+                IntPtr mainWindow = proc.MainWindowHandle;
+                if (mainWindow == IntPtr.Zero || !IsWindowVisible(mainWindow))
+                {
+                    return false;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private void ScanProcesses()
@@ -179,7 +335,7 @@ public class ProcessMonitorService : IDisposable
                         continue;
                     }
 
-                    if (_blacklist.Contains(normalized))
+                    if (IsActiveOffendingProcess(proc, normalized))
                     {
                         Log.Warning("Blacklisted process detected: {ProcessName} (PID: {Pid})", rawName, pid);
 
@@ -230,7 +386,7 @@ public class ProcessMonitorService : IDisposable
     /// Queries all descendant process IDs (children, grandchildren) of the given root process ID
     /// using CreateToolhelp32Snapshot.
     /// </summary>
-    private static HashSet<int> GetDescendantPids(int rootPid)
+    public static HashSet<int> GetDescendantPids(int rootPid)
     {
         var descendants = new HashSet<int>();
         var parentChildMap = new Dictionary<int, List<int>>();
@@ -296,7 +452,78 @@ public class ProcessMonitorService : IDisposable
         return descendants;
     }
 
-    // ── IDisposable ──────────────────────────────────────────────────────────
+    /// <summary>
+    /// Forcefully terminates all child and descendant processes (such as WebView2 renderers)
+    /// spawned by the specified root process.
+    /// </summary>
+    public static void KillDescendantProcesses(int rootPid)
+    {
+        try
+        {
+            var descendants = GetDescendantPids(rootPid);
+            foreach (int pid in descendants)
+            {
+                try
+                {
+                    using var proc = Process.GetProcessById(pid);
+                    if (!proc.HasExited)
+                    {
+                        proc.Kill(true);
+                        Log.Information("Terminated child/descendant process (PID: {Pid})", pid);
+                    }
+                }
+                catch
+                {
+                    // Process already exited
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Error while cleaning up descendant processes");
+        }
+    }
+
+    /// <summary>
+    /// Terminates any running ExamBro config instances to prevent orphaned background processes.
+    /// </summary>
+    public static void TerminateSiblingExamBroProcesses()
+    {
+        string[] targetProcessNames = { "ExamBro.Config", "LouisVox ExamBro Pengaturan" };
+        foreach (string name in targetProcessNames)
+        {
+            try
+            {
+                var configProcesses = Process.GetProcessesByName(name);
+                foreach (var proc in configProcesses)
+                {
+                    try
+                    {
+                        if (!proc.HasExited)
+                        {
+                            proc.Kill();
+                            proc.WaitForExit(1000);
+                            Log.Information("Terminated sibling {Name} process (PID: {Pid})", name, proc.Id);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Debug(ex, "Failed killing {Name} process", name);
+                    }
+                    finally
+                    {
+                        proc.Dispose();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "Error scanning sibling {Name} processes", name);
+            }
+        }
+    }
+
+    // IDisposable
 
     public void Dispose()
     {
@@ -309,6 +536,7 @@ public class ProcessMonitorService : IDisposable
         if (!_disposed)
         {
             Stop();
+            _timer.Dispose();
             _disposed = true;
         }
     }

@@ -1,4 +1,5 @@
 using ExamBro.Core.Validation;
+using Xunit;
 
 namespace ExamBro.Tests;
 
@@ -102,5 +103,56 @@ public class UrlMatcherTests
     {
         string pattern = UrlMatcher.BuildHostPattern("http://localhost:8000/siswa/dashboard");
         Assert.Equal("http://localhost:8000/*", pattern);
+    }
+
+    [Fact]
+    public void BuildHostPattern_PreservesPort8008ForProjectCbt()
+    {
+        string pattern = UrlMatcher.BuildHostPattern("http://localhost:8008/login");
+        Assert.Equal("http://localhost:8008/*", pattern);
+    }
+
+    [Fact]
+    public void MatchesExitUrl_ProjectCbtPort8008()
+    {
+        Assert.True(UrlMatcher.MatchesExitUrl("http://localhost:8008/exam/finished/550e8400-e29b-41d4-a716-446655440000", "*/exam/finished/*"));
+    }
+
+    [Fact]
+    public void IsUrlAllowed_ProjectCbtPort8008Allowed()
+    {
+        var allowed = new List<string> { "http://localhost:8008/*" };
+        var blocked = new List<string>();
+
+        Assert.True(UrlMatcher.IsUrlAllowed("http://localhost:8008/login", allowed, blocked));
+        Assert.True(UrlMatcher.IsUrlAllowed("http://localhost:8008/siswa", allowed, blocked));
+        Assert.True(UrlMatcher.IsUrlAllowed("http://localhost:8008/exam/workspace/test-uuid", allowed, blocked));
+        Assert.False(UrlMatcher.IsUrlAllowed("http://otherhost:8008/test", allowed, blocked));
+    }
+
+    [Theory]
+    [InlineData("http://192.168.70.9:8006", "192.168.0.0", true)]
+    [InlineData("http://192.168.70.9:8006/login", "192.168.0.0", true)]
+    [InlineData("http://192.168.1.100:8008/exam", "192.168.0.0/16", true)]
+    [InlineData("http://192.168.0.1:80", "*192.168.*", true)]
+    [InlineData("https://192.168.254.254/test", "192.168.0.0", true)]
+    [InlineData("http://10.0.0.1:8006/login", "192.168.0.0", false)]
+    [InlineData("http://172.16.0.1:8006/login", "192.168.0.0", false)]
+    [InlineData("https://google.com/search", "192.168.0.0", false)]
+    public void IsMatch_Subnet192168Patterns(string url, string pattern, bool expected)
+    {
+        Assert.Equal(expected, UrlMatcher.IsMatch(url, pattern));
+    }
+
+    [Fact]
+    public void IsUrlAllowed_Subnet192168_AllowsAnyLocalIp()
+    {
+        var allowed = new List<string> { "192.168.0.0" };
+        var blocked = new List<string>();
+
+        Assert.True(UrlMatcher.IsUrlAllowed("http://192.168.70.9:8006", allowed, blocked));
+        Assert.True(UrlMatcher.IsUrlAllowed("http://192.168.1.50:8080/cbt", allowed, blocked));
+        Assert.False(UrlMatcher.IsUrlAllowed("http://10.10.10.10:8006", allowed, blocked));
+        Assert.False(UrlMatcher.IsUrlAllowed("https://exam.external.com", allowed, blocked));
     }
 }

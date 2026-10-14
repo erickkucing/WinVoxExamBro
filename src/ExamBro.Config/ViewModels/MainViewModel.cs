@@ -1,8 +1,10 @@
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
+using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using ExamBro.Config.Helpers;
 using ExamBro.Config.Views;
 using ExamBro.Core;
 using ExamBro.Core.Models;
@@ -19,9 +21,9 @@ namespace ExamBro.Config.ViewModels;
 /// </summary>
 public partial class MainViewModel : ObservableObject
 {
-    // ── General Config ──────────────────────────────────────────────────
+    // General Config
     [ObservableProperty]
-    private string _appTitle = "Ujian Online";
+    private string _appTitle = BrandingHelper.DefaultAppTitle;
 
     [ObservableProperty]
     private string _language = "id";
@@ -39,12 +41,18 @@ public partial class MainViewModel : ObservableObject
     private string _logoPath = string.Empty;
 
     [ObservableProperty]
+    private string? _logoBase64;
+
+    [ObservableProperty]
+    private ImageSource? _logoPreview;
+
+    [ObservableProperty]
     private bool _placeholderUsername = true;
 
     [ObservableProperty]
     private bool _placeholderMachine = true;
 
-    // ── Navigation Config ───────────────────────────────────────────────
+    // Navigation Config
     [ObservableProperty]
     private bool _autoAllowStartUrlHost = true;
 
@@ -83,7 +91,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string? _selectedBlockedPattern;
 
-    // ── Security Config ─────────────────────────────────────────────────
+    // Security Config
     [ObservableProperty]
     private bool _kioskMode = true;
 
@@ -92,6 +100,9 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _blockVirtualMachine = true;
+
+    [ObservableProperty]
+    private bool _checkVirtualNetworkAdapters;
 
     [ObservableProperty]
     private bool _blockRemoteSession = true;
@@ -132,7 +143,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string? _selectedProcess;
 
-    // ── Permissions Config ──────────────────────────────────────────────
+    // Permissions Config
     [ObservableProperty]
     private bool _allowCamera;
 
@@ -145,7 +156,14 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _allowNotifications;
 
-    // ── Admin Config ────────────────────────────────────────────────────
+    // Audio Config
+    [ObservableProperty]
+    private bool _muteAudio;
+
+    [ObservableProperty]
+    private int _volumePercent = 100;
+
+    // Admin Config
     [ObservableProperty]
     private string _adminPasswordHash = string.Empty;
 
@@ -167,7 +185,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private int _passwordLockoutSeconds = 30;
 
-    // ── Logging Config ──────────────────────────────────────────────────
+    // Logging Config
     [ObservableProperty]
     private string _logLevel = "Information";
 
@@ -180,10 +198,10 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string _webhookHmacKey = string.Empty;
 
-    // ── Violations ──────────────────────────────────────────────────────
+    // Violations
     public ObservableCollection<ViolationRuleItemViewModel> ViolationRules { get; } = new();
 
-    // ── Meta, Validation & Status ───────────────────────────────────────
+    // Meta, Validation & Status
     [ObservableProperty]
     private string _configHash = string.Empty;
 
@@ -195,7 +213,7 @@ public partial class MainViewModel : ObservableObject
 
     public ObservableCollection<ValidationError> ValidationErrors { get; } = new();
 
-    // ── Option Lists for UI Binding ─────────────────────────────────────
+    // Option Lists for UI Binding
     public IReadOnlyList<MultiMonitorPolicy> MultiMonitorOptions => Enum.GetValues<MultiMonitorPolicy>();
     public IReadOnlyList<ProcessActionType> ProcessActionOptions => Enum.GetValues<ProcessActionType>();
     public IReadOnlyList<ViolationAction> ViolationActionOptions => Enum.GetValues<ViolationAction>();
@@ -217,14 +235,22 @@ public partial class MainViewModel : ObservableObject
     public void LoadFromConfig(ExamConfig config)
     {
         // General
-        AppTitle = config.General.AppTitle;
+        AppTitle = string.IsNullOrWhiteSpace(config.General.AppTitle) ? BrandingHelper.DefaultAppTitle : config.General.AppTitle;
         Language = config.General.Language;
         StartUrl = config.General.StartUrl;
         AllowCommandLineOverride = config.General.AllowCommandLineOverride;
         ShowToolbar = config.General.ShowToolbar;
-        LogoPath = config.General.LogoPath;
+        LogoPath = config.General.LogoPath ?? string.Empty;
+        LogoBase64 = config.General.LogoBase64;
         PlaceholderUsername = config.General.PlaceholderUsername;
         PlaceholderMachine = config.General.PlaceholderMachine;
+
+        byte[] logoBytes = BrandingHelper.ResolveLogoBytes(LogoBase64, LogoPath);
+        LogoPreview = ImageHelper.CreateImageSource(logoBytes);
+        if (Application.Current?.MainWindow != null && LogoPreview != null)
+        {
+            Application.Current.MainWindow.Icon = LogoPreview;
+        }
 
         // Navigation
         AutoAllowStartUrlHost = config.Navigation.AutoAllowStartUrlHost;
@@ -247,6 +273,7 @@ public partial class MainViewModel : ObservableObject
         KioskMode = config.Security.KioskMode;
         MultiMonitor = config.Security.MultiMonitor;
         BlockVirtualMachine = config.Security.BlockVirtualMachine;
+        CheckVirtualNetworkAdapters = config.Security.CheckVirtualNetworkAdapters;
         BlockRemoteSession = config.Security.BlockRemoteSession;
         AllowClipboard = config.Security.AllowClipboard;
         ScreenCaptureProtection = config.Security.ScreenCaptureProtection;
@@ -268,6 +295,10 @@ public partial class MainViewModel : ObservableObject
         AllowMicrophone = config.Permissions.AllowMicrophone;
         AllowGeolocation = config.Permissions.AllowGeolocation;
         AllowNotifications = config.Permissions.AllowNotifications;
+
+        // Audio
+        MuteAudio = config.Audio?.MuteAudio ?? false;
+        VolumePercent = Math.Clamp(config.Audio?.VolumePercent ?? 100, 0, 100);
 
         // Admin
         AdminPasswordHash = config.Admin.AdminPasswordHash;
@@ -337,6 +368,7 @@ public partial class MainViewModel : ObservableObject
                 AllowCommandLineOverride = AllowCommandLineOverride,
                 ShowToolbar = ShowToolbar,
                 LogoPath = LogoPath,
+                LogoBase64 = LogoBase64,
                 PlaceholderUsername = PlaceholderUsername,
                 PlaceholderMachine = PlaceholderMachine
             },
@@ -357,6 +389,7 @@ public partial class MainViewModel : ObservableObject
                 KioskMode = KioskMode,
                 MultiMonitor = MultiMonitor,
                 BlockVirtualMachine = BlockVirtualMachine,
+                CheckVirtualNetworkAdapters = CheckVirtualNetworkAdapters,
                 BlockRemoteSession = BlockRemoteSession,
                 AllowClipboard = AllowClipboard,
                 ScreenCaptureProtection = ScreenCaptureProtection,
@@ -375,6 +408,11 @@ public partial class MainViewModel : ObservableObject
                 AllowMicrophone = AllowMicrophone,
                 AllowGeolocation = AllowGeolocation,
                 AllowNotifications = AllowNotifications
+            },
+            Audio = new AudioConfig
+            {
+                MuteAudio = MuteAudio,
+                VolumePercent = Math.Clamp(VolumePercent, 0, 100)
             },
             Admin = new AdminConfig
             {
@@ -404,7 +442,7 @@ public partial class MainViewModel : ObservableObject
         return config;
     }
 
-    // ── Command Handlers ────────────────────────────────────────────────
+    // Command Handlers
 
     [RelayCommand]
     private void Save()
@@ -447,6 +485,15 @@ public partial class MainViewModel : ObservableObject
             bool isPortable = Constants.IsPortableMode || targetFile.Equals(Constants.PortableConfigPath, StringComparison.OrdinalIgnoreCase);
             byte[] encrypted = ConfigEncryption.EncryptConfig(config, portable: isPortable);
             File.WriteAllBytes(targetFile, encrypted);
+
+            if (!string.IsNullOrEmpty(directory))
+            {
+                byte[] logoBytes = BrandingHelper.ResolveLogoBytes(config.General.LogoBase64, config.General.LogoPath);
+                if (logoBytes.Length > 0)
+                {
+                    try { File.WriteAllBytes(Path.Combine(directory, "logo.png"), logoBytes); } catch { }
+                }
+            }
 
             ConfigHash = ConfigEncryption.ComputeConfigHash(config);
             StatusMessage = $"Konfigurasi berhasil disimpan! ({DateTime.Now:HH:mm:ss})";
@@ -504,6 +551,16 @@ public partial class MainViewModel : ObservableObject
             string targetFile = Constants.PortableConfigPath;
             byte[] encrypted = ConfigEncryption.EncryptPortableConfig(config);
             File.WriteAllBytes(targetFile, encrypted);
+
+            string? pDir = Path.GetDirectoryName(targetFile);
+            if (!string.IsNullOrEmpty(pDir))
+            {
+                byte[] logoBytes = BrandingHelper.ResolveLogoBytes(config.General.LogoBase64, config.General.LogoPath);
+                if (logoBytes.Length > 0)
+                {
+                    try { File.WriteAllBytes(Path.Combine(pDir, "logo.png"), logoBytes); } catch { }
+                }
+            }
 
             ConfigHash = ConfigEncryption.ComputeConfigHash(config);
             StatusMessage = $"Konfigurasi portable berhasil disimpan! ({DateTime.Now:HH:mm:ss})";
@@ -764,14 +821,52 @@ public partial class MainViewModel : ObservableObject
     {
         var openDialog = new OpenFileDialog
         {
-            Title = "Pilih Berkas Logo",
-            Filter = "Gambar (*.png;*.jpg;*.jpeg;*.ico;*.bmp)|*.png;*.jpg;*.jpeg;*.ico;*.bmp|Semua Berkas (*.*)|*.*"
+            Title = "Pilih Berkas Logo & Ikon",
+            Filter = "Berkas Gambar (*.png;*.jpg;*.jpeg;*.ico;*.bmp)|*.png;*.jpg;*.jpeg;*.ico;*.bmp|Semua Berkas (*.*)|*.*"
         };
 
         if (openDialog.ShowDialog() == true)
         {
-            LogoPath = openDialog.FileName;
+            try
+            {
+                byte[] bytes = File.ReadAllBytes(openDialog.FileName);
+                var image = ImageHelper.CreateImageSource(bytes);
+                if (image != null)
+                {
+                    LogoPath = openDialog.FileName;
+                    LogoBase64 = Convert.ToBase64String(bytes);
+                    LogoPreview = image;
+                    if (Application.Current?.MainWindow != null)
+                    {
+                        Application.Current.MainWindow.Icon = image;
+                    }
+                    StatusMessage = "Logo dan ikon berhasil diperbarui.";
+                }
+                else
+                {
+                    MessageBox.Show("Format berkas gambar tidak dapat dibaca atau tidak didukung.", "Peringatan", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Gagal memuat berkas logo");
+                MessageBox.Show($"Gagal memuat logo: {ex.Message}", "Kesalahan", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
+    }
+
+    [RelayCommand]
+    private void ResetLogo()
+    {
+        LogoPath = string.Empty;
+        LogoBase64 = null;
+        byte[] defaultBytes = BrandingHelper.GetDefaultLogoBytes();
+        LogoPreview = ImageHelper.CreateImageSource(defaultBytes);
+        if (Application.Current?.MainWindow != null && LogoPreview != null)
+        {
+            Application.Current.MainWindow.Icon = LogoPreview;
+        }
+        StatusMessage = "Logo dikembalikan ke default (LouisVox ExamBro).";
     }
 
     [RelayCommand]

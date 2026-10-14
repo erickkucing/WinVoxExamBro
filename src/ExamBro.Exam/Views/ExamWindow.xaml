@@ -3,13 +3,15 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         xmlns:views="clr-namespace:ExamBro.Exam.Views"
-        Title="ExamBro - Ujian Online"
+        Title="{Binding AppTitle}"
         WindowStyle="None"
         ResizeMode="NoResize"
         Topmost="True"
         WindowState="Maximized"
         ShowInTaskbar="False"
-        Background="#000000">
+        Background="#000000"
+        PreviewMouseWheel="OnWindowPreviewMouseWheel"
+        PreviewKeyDown="OnWindowPreviewKeyDown">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
 
@@ -22,6 +24,8 @@
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="FontSize" Value="14"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="ClickMode" Value="Press"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -50,11 +54,14 @@
         <DockPanel LastChildFill="True">
             <!-- Toolbar (Docked Top) -->
             <Border DockPanel.Dock="Top"
+                    Panel.ZIndex="10"
                     Height="44"
                     Background="#1E293B"
                     BorderBrush="#334155"
                     BorderThickness="0,0,0,1"
                     Padding="12,0"
+                    PreviewMouseUp="Toolbar_PreviewMouseUp"
+                    PreviewMouseDown="Toolbar_PreviewMouseDown"
                     Visibility="{Binding IsToolbarVisible, Converter={StaticResource BoolToVis}}">
                 <Grid>
                     <!-- Left Navigation Controls -->
@@ -73,12 +80,53 @@
                                 ToolTip="Muat Ulang"
                                 Style="{StaticResource ToolbarButtonStyle}"
                                 Command="{Binding ReloadCommand}"/>
-                        <Button Content="⌂"
-                                ToolTip="Halaman Awal"
-                                Style="{StaticResource ToolbarButtonStyle}"
-                                Command="{Binding GoHomeCommand}"/>
 
-                        <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="8,4" Background="#475569"/>
+                        <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="6,4" Background="#475569"/>
+
+                        <!-- Zoom Controls (50% - 150%) -->
+                        <Button Content="−"
+                                ToolTip="Perkecil Ukuran Tampilan (Zoom Out)"
+                                Style="{StaticResource ToolbarButtonStyle}"
+                                Command="{Binding ZoomOutCommand}"
+                                IsEnabled="{Binding CanZoomOut}"/>
+
+                        <Button ToolTip="Atur Ulang Ukuran Tampilan (100%)"
+                                Command="{Binding ResetZoomCommand}"
+                                Background="#0F172A"
+                                Foreground="#94A3B8"
+                                BorderThickness="0"
+                                Height="26"
+                                Padding="6,2"
+                                Margin="2,0"
+                                Cursor="Hand"
+                                Focusable="False">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                        <TextBlock Text="{Binding ZoomDisplay}"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"
+                                                   FontFamily="Consolas, Segoe UI"
+                                                   Foreground="{TemplateBinding Foreground}"
+                                                   VerticalAlignment="Center"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Foreground" Value="#F8FAFC"/>
+                                            <Setter Property="Background" Value="#334155"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+
+                        <Button Content="+"
+                                ToolTip="Perbesar Ukuran Tampilan (Zoom In)"
+                                Style="{StaticResource ToolbarButtonStyle}"
+                                Command="{Binding ZoomInCommand}"
+                                IsEnabled="{Binding CanZoomIn}"/>
+
+                        <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Margin="6,4" Background="#475569"/>
 
                         <!-- Current Domain Info -->
                         <Border Background="#0F172A" CornerRadius="4" Padding="8,4" Margin="4,0">
@@ -95,6 +143,7 @@
 
                     <!-- Center Title & User Info -->
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Image Source="{Binding LogoImage}" Width="20" Height="20" Margin="0,0,8,0" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality"/>
                         <TextBlock Text="{Binding AppTitle}"
                                    Foreground="#F8FAFC"
                                    FontSize="13"
@@ -121,7 +170,7 @@
                         </Border>
 
                         <!-- Digital Clock -->
-                        <Border Background="#0F172A" CornerRadius="4" Padding="8,4" Margin="0,0,12,0">
+                        <Border Background="#0F172A" CornerRadius="4" Padding="8,4">
                             <TextBlock Text="{Binding ClockTime}"
                                        Foreground="#F8FAFC"
                                        FontSize="12"
@@ -129,24 +178,6 @@
                                        FontFamily="Consolas"
                                        VerticalAlignment="Center"/>
                         </Border>
-
-                        <!-- Exit Button -->
-                        <Button Content="Keluar"
-                                Height="28"
-                                Padding="14,0"
-                                Background="#DC2626"
-                                Foreground="#FFFFFF"
-                                FontSize="12"
-                                FontWeight="SemiBold"
-                                BorderThickness="0"
-                                Cursor="Hand"
-                                Command="{Binding RequestExitCommand}">
-                            <Button.Resources>
-                                <Style TargetType="Border">
-                                    <Setter Property="CornerRadius" Value="4"/>
-                                </Style>
-                            </Button.Resources>
-                        </Button>
                     </StackPanel>
                 </Grid>
             </Border>
@@ -154,6 +185,36 @@
             <!-- Embedded WebView2 Browser -->
             <wv2:WebView2 x:Name="webView"/>
         </DockPanel>
+
+        <!-- WebView2 Engine Failure Fallback Overlay -->
+        <Grid x:Name="pnlWebViewInitError" Visibility="Collapsed" Background="#0F172A">
+            <Border Width="500" Background="#1E293B" CornerRadius="12" Padding="36" HorizontalAlignment="Center" VerticalAlignment="Center" BorderBrush="#EF4444" BorderThickness="1.5">
+                <StackPanel HorizontalAlignment="Center">
+                    <Border Width="64" Height="64" CornerRadius="32" Background="#450A0A" Margin="0,0,0,16" HorizontalAlignment="Center">
+                        <TextBlock Text="⚠" FontSize="34" Foreground="#EF4444" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Text="Gagal Memuat Mesin Browser" FontSize="20" FontWeight="Bold" Foreground="#F8FAFC" HorizontalAlignment="Center" Margin="0,0,0,12"/>
+                    <TextBlock Text="Komponen Microsoft Edge WebView2 Runtime tidak dapat diinisialisasi atau belum terpasang di sistem ini. Silakan hubungi proktor atau administrator ujian." FontSize="14" Foreground="#94A3B8" TextWrapping="Wrap" TextAlignment="Center" Margin="0,0,0,24"/>
+                    <Button Content="Tutup Aplikasi" Width="160" Height="38" Background="#DC2626" Foreground="#FFFFFF" FontWeight="SemiBold" Cursor="Hand" Click="BtnInitErrorExit_Click">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="btnExitBorder" Background="{TemplateBinding Background}" CornerRadius="6">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="btnExitBorder" Property="Background" Value="#EF4444"/>
+                                    </Trigger>
+                                    <Trigger Property="IsPressed" Value="True">
+                                        <Setter TargetName="btnExitBorder" Property="Background" Value="#B91C1C"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                </StackPanel>
+            </Border>
+        </Grid>
 
         <!-- Security Warning Overlay (Auto-dismisses in 5s) -->
         <views:WarningOverlay x:Name="warningOverlay" Visibility="Collapsed"/>

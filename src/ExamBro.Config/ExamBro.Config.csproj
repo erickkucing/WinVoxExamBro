@@ -5,7 +5,11 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>ExamBro.Config</AssemblyName>
     <RootNamespace>ExamBro.Config</RootNamespace>
+    <ApplicationIcon>Resources\exam.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />

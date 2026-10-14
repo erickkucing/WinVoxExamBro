@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace ExamBro.Core.Models;
 
-// ── Enums ──────────────────────────────────────────────────────────────
+// Enums
 
 /// <summary>Policy for handling secondary monitors.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -30,16 +30,17 @@ public enum ViolationEventType
     ClipboardAttempt
 }
 
-// ── Nested config sections ─────────────────────────────────────────────
+// Nested config sections
 
 public class GeneralConfig
 {
-    public string AppTitle { get; set; } = "Ujian Online";
+    public string AppTitle { get; set; } = "LouisVox ExamBro";
     public string Language { get; set; } = "id";
-    public string StartUrl { get; set; } = "https://ujian.contoh.sch.id/login";
+    public string StartUrl { get; set; } = "http://192.168.70.9";
     public bool AllowCommandLineOverride { get; set; } = false;
     public bool ShowToolbar { get; set; } = true;
     public string LogoPath { get; set; } = "";
+    public string? LogoBase64 { get; set; }
     public bool PlaceholderUsername { get; set; } = true;
     public bool PlaceholderMachine { get; set; } = true;
 }
@@ -47,7 +48,20 @@ public class GeneralConfig
 public class NavigationConfig
 {
     public bool AutoAllowStartUrlHost { get; set; } = true;
-    public List<string> AllowedUrlPatterns { get; set; } = new() { "https://ujian.contoh.sch.id/*" };
+    public List<string> AllowedUrlPatterns { get; set; } = new()
+    {
+        "*192.168.*",
+        "http://192.168.*/*",
+        "https://192.168.*/*",
+        "192.168.0.0/16",
+        "192.168.0.0",
+        "*localhost*",
+        "http://localhost/*",
+        "https://localhost/*",
+        "*127.0.0.1*",
+        "http://127.0.0.1/*",
+        "https://127.0.0.1/*"
+    };
     public List<string> BlockedUrlPatterns { get; set; } = new();
     public string ExitUrlPattern { get; set; } = "*/exam/finished/*";
     public int ExitUrlAutoCloseSeconds { get; set; } = 5;
@@ -64,6 +78,7 @@ public class SecurityConfig
     public MultiMonitorPolicy MultiMonitor { get; set; } = MultiMonitorPolicy.CoverAll;
 
     public bool BlockVirtualMachine { get; set; } = true;
+    public bool CheckVirtualNetworkAdapters { get; set; } = false;
     public bool BlockRemoteSession { get; set; } = true;
     public bool AllowClipboard { get; set; } = false;
     public bool ScreenCaptureProtection { get; set; } = true;
@@ -126,7 +141,13 @@ public class PermissionsConfig
     public bool AllowNotifications { get; set; } = false;
 }
 
-// ── Root config ────────────────────────────────────────────────────────
+public class AudioConfig
+{
+    public bool MuteAudio { get; set; } = false;
+    public int VolumePercent { get; set; } = 100;
+}
+
+// Root config
 
 /// <summary>
 /// Root configuration object serialized as encrypted JSON.
@@ -140,6 +161,7 @@ public class ExamConfig
     public AdminConfig Admin { get; set; } = new();
     public LoggingConfig Logging { get; set; } = new();
     public PermissionsConfig Permissions { get; set; } = new();
+    public AudioConfig Audio { get; set; } = new();
 
     /// <summary>
     /// Creates a default configuration with the full process blacklist
@@ -148,6 +170,22 @@ public class ExamConfig
     public static ExamConfig CreateDefault()
     {
         var config = new ExamConfig();
+
+        config.General.StartUrl = "http://192.168.70.9";
+        config.Navigation.AllowedUrlPatterns = new()
+        {
+            "*192.168.*",
+            "http://192.168.*/*",
+            "https://192.168.*/*",
+            "192.168.0.0/16",
+            "192.168.0.0",
+            "*localhost*",
+            "http://localhost/*",
+            "https://localhost/*",
+            "*127.0.0.1*",
+            "http://127.0.0.1/*",
+            "https://127.0.0.1/*"
+        };
 
         config.Logging.LogPath = Constants.LogFolder;
 

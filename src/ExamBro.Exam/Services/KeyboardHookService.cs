@@ -33,6 +33,12 @@ public class KeyboardHookService : IDisposable
     private readonly HashSet<uint> _pressedChordKeys = new();
     private long _chordWindowStartTimestamp;
     private const long ChordWindowMs = 2500;
+    private volatile bool _isSuspended;
+
+    public void SetSuspended(bool suspended)
+    {
+        _isSuspended = suspended;
+    }
 
     // Win32 P/Invoke Declarations
 
@@ -197,6 +203,11 @@ public class KeyboardHookService : IDisposable
     {
         if (nCode >= 0)
         {
+            if (_isSuspended)
+            {
+                return CallNextHookEx(_hookId, nCode, wParam, lParam);
+            }
+
             int msg = wParam.ToInt32();
             bool isKeyDown = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
 

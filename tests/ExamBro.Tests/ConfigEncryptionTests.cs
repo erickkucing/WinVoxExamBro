@@ -1,5 +1,6 @@
 using ExamBro.Core.Models;
 using ExamBro.Core.Security;
+using Xunit;
 
 namespace ExamBro.Tests;
 
@@ -138,5 +139,97 @@ public class ConfigEncryptionTests
     {
         var config = ExamConfig.CreateDefault();
         Assert.Equal("Ctrl+C+B", config.Admin.ExitShortcut);
+    }
+
+    [Fact]
+    public void BlockVirtualMachine_CanBeDisabledAndPreserved()
+    {
+        var config = ExamConfig.CreateDefault();
+        config.Security.BlockVirtualMachine = false;
+
+        byte[] encrypted = ConfigEncryption.EncryptPortableConfig(config);
+        var decrypted = ConfigEncryption.DecryptConfig(encrypted);
+
+        Assert.False(decrypted.Security.BlockVirtualMachine);
+    }
+
+    [Fact]
+    public void GenerateDistributionConfig_WithVmDisabled()
+    {
+        var config = ExamConfig.CreateDefault();
+        config.General.AppTitle = "LouisVox ExamBro";
+        config.General.StartUrl = "http://192.168.70.9";
+        config.General.LogoBase64 = ExamBro.Core.BrandingHelper.GetDefaultLogoBase64();
+        config.Navigation.AllowedUrlPatterns = new()
+        {
+            "*192.168.*",
+            "http://192.168.*/*",
+            "https://192.168.*/*",
+            "192.168.0.0/16",
+            "192.168.0.0",
+            "*localhost*",
+            "http://localhost/*",
+            "https://localhost/*",
+            "*127.0.0.1*",
+            "http://127.0.0.1/*",
+            "https://127.0.0.1/*"
+        };
+        config.Admin.ExitShortcut = "Ctrl+C+B";
+
+        var (adminHash, adminSalt) = PasswordHasher.HashPassword("admin123");
+        config.Admin.AdminPasswordHash = adminHash;
+        config.Admin.AdminPasswordSalt = adminSalt;
+
+        var (proctorHash, proctorSalt) = PasswordHasher.HashPassword("proctor123");
+        config.Admin.ProctorPasswordHash = proctorHash;
+        config.Admin.ProctorPasswordSalt = proctorSalt;
+
+        // Allow VM testing by default so test PCs and machines with Hyper-V/WSL can run without false positives
+        config.Security.BlockVirtualMachine = false;
+        config.Security.BlockRemoteSession = true;
+
+        // Audio defaults
+        config.Audio.MuteAudio = false;
+        config.Audio.VolumePercent = 100;
+
+        byte[] encrypted = ConfigEncryption.EncryptPortableConfig(config);
+
+        string baseDir = AppContext.BaseDirectory;
+        DirectoryInfo? dir = new DirectoryInfo(baseDir);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "ExamBro.sln")))
+        {
+            dir = dir.Parent;
+        }
+
+        if (dir != null)
+        {
+            string targetPath = Path.Combine(dir.FullName, "dist", "LouisVoxExamBro", "Portable", "exambro.cfg");
+            if (Directory.Exists(Path.GetDirectoryName(targetPath)))
+            {
+                File.WriteAllBytes(targetPath, encrypted);
+            }
+        }
+
+        var verified = ConfigEncryption.DecryptConfig(encrypted);
+        Assert.False(verified.Security.BlockVirtualMachine);
+        Assert.Equal("LouisVox ExamBro", verified.General.AppTitle);
+        Assert.Equal("http://192.168.70.9", verified.General.StartUrl);
+        Assert.Contains("192.168.0.0", verified.Navigation.AllowedUrlPatterns);
+        Assert.Equal(100, verified.Audio.VolumePercent);
+        Assert.False(verified.Audio.MuteAudio);
+    }
+
+    [Fact]
+    public void AudioConfig_Serialization_PreservesValues()
+    {
+        var config = ExamConfig.CreateDefault();
+        config.Audio.MuteAudio = true;
+        config.Audio.VolumePercent = 45;
+
+        byte[] encrypted = ConfigEncryption.EncryptPortableConfig(config);
+        var decrypted = ConfigEncryption.DecryptConfig(encrypted);
+
+        Assert.True(decrypted.Audio.MuteAudio);
+        Assert.Equal(45, decrypted.Audio.VolumePercent);
     }
 }

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Management;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
 using ExamBro.Core;
@@ -21,7 +22,7 @@ public class KioskLockService : IDisposable
     private bool _engaged;
     private bool _disposed;
 
-    // ── Win32 P/Invoke Declarations ──────────────────────────────────────────
+    // Win32 P/Invoke Declarations
 
     /// <summary>
     /// FindWindow: Retrieves a handle to the top-level window whose class name matches the specified string.
@@ -82,7 +83,7 @@ public class KioskLockService : IDisposable
         ref TOGGLEKEYS pvParam,
         uint fWinIni);
 
-    // ── Win32 Constants ──────────────────────────────────────────────────────
+    // Win32 Constants
 
     private const int SW_HIDE = 0;
     private const int SW_SHOW = 5;
@@ -133,7 +134,7 @@ public class KioskLockService : IDisposable
         public uint dwFlags;
     }
 
-    // ── Public Engagement & Disengagement ────────────────────────────────────
+    // Public Engagement & Disengagement
 
     /// <summary>
     /// Engages full kiosk lockdown: hides taskbars, writes registry lockdown policies,
@@ -225,7 +226,7 @@ public class KioskLockService : IDisposable
         }
     }
 
-    // ── Taskbar Helpers ──────────────────────────────────────────────────────
+    // Taskbar Helpers
 
     private void HideTaskbar()
     {
@@ -272,48 +273,62 @@ public class KioskLockService : IDisposable
         }
     }
 
-    // ── Registry Policy Helpers ──────────────────────────────────────────────
+    // Registry Policy Helpers
 
     private void ApplyRegistryPolicies()
     {
-        // System policies: DisableTaskMgr, DisableLockWorkstation, DisableChangePassword
-        SetPolicyAndSaveOriginal(Constants.SystemPolicySubKey, "DisableTaskMgr", 1);
-        SetPolicyAndSaveOriginal(Constants.SystemPolicySubKey, "DisableLockWorkstation", 1);
-        SetPolicyAndSaveOriginal(Constants.SystemPolicySubKey, "DisableChangePassword", 1);
+        // System policies: DisableTaskMgr, DisableLockWorkstation, DisableChangePassword, HideFastUserSwitching
+        // Applied to both HKCU and HKLM to ensure complete lockdown of Winlogon SAS screen (Ctrl+Alt+Del)
+        foreach (bool useHklm in new[] { false, true })
+        {
+            SetPolicyAndSaveOriginal(Constants.SystemPolicySubKey, "DisableTaskMgr", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.SystemPolicySubKey, "DisableLockWorkstation", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.SystemPolicySubKey, "DisableChangePassword", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.SystemPolicySubKey, "HideFastUserSwitching", 1, useHklm);
 
-        // Explorer policies: NoLogoff
-        SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "NoLogoff", 1);
+            // Explorer policies: NoLogoff (Disable Sign out), NoClose (Disable Shutdown from SAS)
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "NoLogoff", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "NoClose", 1, useHklm);
+        }
+
+        // Try Windows Keyboard Filter (WEKF) via WMI if available
+        TryConfigureKeyboardFilter(enableFilter: true);
     }
 
-    private void SetPolicyAndSaveOriginal(string subKey, string valueName, int newValue)
+    private void SetPolicyAndSaveOriginal(string subKey, string valueName, int newValue, bool useHklm = false)
     {
-        string fullPath = $@"HKCU\{subKey}\{valueName}";
+        string rootPrefix = useHklm ? "HKLM" : "HKCU";
+        string fullPath = $@"{rootPrefix}\{subKey}\{valueName}";
         try
         {
-            int? original = GetRegistryValue(subKey, valueName);
+            int? original = GetRegistryValue(subKey, valueName, useHklm);
             if (!_recovery.OriginalRegistryValues.ContainsKey(fullPath))
             {
                 _recovery.OriginalRegistryValues[fullPath] = original;
             }
 
-            SetRegistryValue(subKey, valueName, newValue);
+            SetRegistryValue(subKey, valueName, newValue, useHklm);
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to set registry policy {SubKey}\\{ValueName}", subKey, valueName);
+            Log.Warning(ex, "Failed to set registry policy {Root}\\{SubKey}\\{ValueName}", rootPrefix, subKey, valueName);
         }
     }
 
     private void RestoreRegistryPolicies()
     {
+        // Restore Keyboard Filter if previously configured
+        TryConfigureKeyboardFilter(enableFilter: false);
+
         foreach (var entry in _recovery.OriginalRegistryValues)
         {
-            string fullPath = entry.Key; // e.g. HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System\DisableTaskMgr
+            string fullPath = entry.Key; // e.g. HKCU\Software\... or HKLM\Software\...
             int? originalValue = entry.Value;
 
             try
             {
-                string pathWithoutRoot = fullPath.StartsWith(@"HKCU\", StringComparison.OrdinalIgnoreCase)
+                bool isHklm = fullPath.StartsWith(@"HKLM\", StringComparison.OrdinalIgnoreCase);
+                string pathWithoutRoot = (isHklm || fullPath.StartsWith(@"HKCU\", StringComparison.OrdinalIgnoreCase))
                     ? fullPath[5..]
                     : fullPath;
 
@@ -325,11 +340,11 @@ public class KioskLockService : IDisposable
 
                 if (originalValue.HasValue)
                 {
-                    SetRegistryValue(subKey, valueName, originalValue.Value);
+                    SetRegistryValue(subKey, valueName, originalValue.Value, useHklm: isHklm);
                 }
                 else
                 {
-                    DeleteRegistryValue(subKey, valueName);
+                    DeleteRegistryValue(subKey, valueName, useHklm: isHklm);
                 }
             }
             catch (Exception ex)
@@ -341,49 +356,77 @@ public class KioskLockService : IDisposable
         _recovery.OriginalRegistryValues.Clear();
     }
 
-    public static int? GetRegistryValue(string subKey, string valueName)
+    public static int? GetRegistryValue(string subKey, string valueName, bool useHklm = false)
     {
         try
         {
-            using var key = Registry.CurrentUser.OpenSubKey(subKey);
+            var baseKey = useHklm ? Registry.LocalMachine : Registry.CurrentUser;
+            using var key = baseKey.OpenSubKey(subKey);
             object? val = key?.GetValue(valueName);
             if (val is int intVal) return intVal;
             if (val is not null && int.TryParse(val.ToString(), out int parsed)) return parsed;
         }
         catch (Exception ex)
         {
-            Log.Debug(ex, "Registry read error for {SubKey}\\{ValueName}", subKey, valueName);
+            Log.Debug(ex, "Registry read error for {Root}\\{SubKey}\\{ValueName}", useHklm ? "HKLM" : "HKCU", subKey, valueName);
         }
         return null;
     }
 
-    public static void SetRegistryValue(string subKey, string valueName, int value)
+    public static void SetRegistryValue(string subKey, string valueName, int value, bool useHklm = false)
     {
         try
         {
-            using var key = Registry.CurrentUser.CreateSubKey(subKey);
+            var baseKey = useHklm ? Registry.LocalMachine : Registry.CurrentUser;
+            using var key = baseKey.CreateSubKey(subKey);
             key?.SetValue(valueName, value, RegistryValueKind.DWord);
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Registry write error for {SubKey}\\{ValueName}", subKey, valueName);
+            Log.Warning(ex, "Registry write error for {Root}\\{SubKey}\\{ValueName}", useHklm ? "HKLM" : "HKCU", subKey, valueName);
         }
     }
 
-    public static void DeleteRegistryValue(string subKey, string valueName)
+    public static void DeleteRegistryValue(string subKey, string valueName, bool useHklm = false)
     {
         try
         {
-            using var key = Registry.CurrentUser.OpenSubKey(subKey, true);
+            var baseKey = useHklm ? Registry.LocalMachine : Registry.CurrentUser;
+            using var key = baseKey.OpenSubKey(subKey, true);
             key?.DeleteValue(valueName, false);
         }
         catch (Exception ex)
         {
-            Log.Debug(ex, "Registry delete error for {SubKey}\\{ValueName}", subKey, valueName);
+            Log.Debug(ex, "Registry delete error for {Root}\\{SubKey}\\{ValueName}", useHklm ? "HKLM" : "HKCU", subKey, valueName);
         }
     }
 
-    // ── Accessibility Hotkey Helpers ─────────────────────────────────────────
+    private static void TryConfigureKeyboardFilter(bool enableFilter)
+    {
+        try
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return;
+
+            var scope = new ManagementScope(@"\\.\root\standardcimv2\embedded");
+            scope.Connect();
+
+            var query = new ObjectQuery("SELECT * FROM WEKF_PredefinedKey WHERE Id='Ctrl+Alt+Del' OR Id='Ctrl+Alt+Delete'");
+            using var searcher = new ManagementObjectSearcher(scope, query);
+            foreach (ManagementObject obj in searcher.Get())
+            {
+                obj["Enabled"] = enableFilter;
+                obj.Put();
+                Log.Information("WEKF PredefinedKey Ctrl+Alt+Del set to {Enabled}", enableFilter);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "WEKF (Keyboard Filter) unavailable or not installed on this system.");
+        }
+    }
+
+    // Accessibility Hotkey Helpers
 
     private void DisableAccessibilityHotkeys()
     {
@@ -395,7 +438,7 @@ public class KioskLockService : IDisposable
             {
                 _recovery.OriginalStickyKeysFlags = sk.dwFlags;
                 sk.dwFlags &= ~(SKF_HOTKEYACTIVE | SKF_CONFIRMHOTKEY | SKF_STICKYKEYSON);
-                SystemParametersInfo(SPI_SETSTICKYKEYS, sk.cbSize, ref sk, SPIF_SENDCHANGE);
+                SystemParametersInfo(SPI_SETSTICKYKEYS, sk.cbSize, ref sk, 0);
             }
 
             // FilterKeys
@@ -404,7 +447,7 @@ public class KioskLockService : IDisposable
             {
                 _recovery.OriginalFilterKeysFlags = fk.dwFlags;
                 fk.dwFlags &= ~(FKF_HOTKEYACTIVE | FKF_CONFIRMHOTKEY | FKF_FILTERKEYSON);
-                SystemParametersInfo(SPI_SETFILTERKEYS, fk.cbSize, ref fk, SPIF_SENDCHANGE);
+                SystemParametersInfo(SPI_SETFILTERKEYS, fk.cbSize, ref fk, 0);
             }
 
             // ToggleKeys
@@ -413,7 +456,7 @@ public class KioskLockService : IDisposable
             {
                 _recovery.OriginalToggleKeysFlags = tk.dwFlags;
                 tk.dwFlags &= ~(TKF_HOTKEYACTIVE | TKF_CONFIRMHOTKEY | TKF_TOGGLEKEYSON);
-                SystemParametersInfo(SPI_SETTOGGLEKEYS, tk.cbSize, ref tk, SPIF_SENDCHANGE);
+                SystemParametersInfo(SPI_SETTOGGLEKEYS, tk.cbSize, ref tk, 0);
             }
         }
         catch (Exception ex)
@@ -433,7 +476,7 @@ public class KioskLockService : IDisposable
                     cbSize = (uint)Marshal.SizeOf<STICKYKEYS>(),
                     dwFlags = _recovery.OriginalStickyKeysFlags
                 };
-                SystemParametersInfo(SPI_SETSTICKYKEYS, sk.cbSize, ref sk, SPIF_SENDCHANGE);
+                SystemParametersInfo(SPI_SETSTICKYKEYS, sk.cbSize, ref sk, 0);
             }
 
             if (_recovery.OriginalFilterKeysFlags != 0)
@@ -443,7 +486,7 @@ public class KioskLockService : IDisposable
                     cbSize = (uint)Marshal.SizeOf<FILTERKEYS>(),
                     dwFlags = _recovery.OriginalFilterKeysFlags
                 };
-                SystemParametersInfo(SPI_SETFILTERKEYS, fk.cbSize, ref fk, SPIF_SENDCHANGE);
+                SystemParametersInfo(SPI_SETFILTERKEYS, fk.cbSize, ref fk, 0);
             }
 
             if (_recovery.OriginalToggleKeysFlags != 0)
@@ -453,7 +496,7 @@ public class KioskLockService : IDisposable
                     cbSize = (uint)Marshal.SizeOf<TOGGLEKEYS>(),
                     dwFlags = _recovery.OriginalToggleKeysFlags
                 };
-                SystemParametersInfo(SPI_SETTOGGLEKEYS, tk.cbSize, ref tk, SPIF_SENDCHANGE);
+                SystemParametersInfo(SPI_SETTOGGLEKEYS, tk.cbSize, ref tk, 0);
             }
         }
         catch (Exception ex)
@@ -462,7 +505,7 @@ public class KioskLockService : IDisposable
         }
     }
 
-    // ── Explorer Shell Helpers ───────────────────────────────────────────────
+    // Explorer Shell Helpers
 
     private void KillExplorer()
     {
@@ -504,7 +547,7 @@ public class KioskLockService : IDisposable
         }
     }
 
-    // ── Static Recovery Method ───────────────────────────────────────────────
+    // Static Recovery Method
 
     /// <summary>
     /// Restores system state after an ungraceful shutdown or crash using the persisted
@@ -601,7 +644,7 @@ public class KioskLockService : IDisposable
         }
     }
 
-    // ── IDisposable ──────────────────────────────────────────────────────────
+    // IDisposable
 
     public void Dispose()
     {

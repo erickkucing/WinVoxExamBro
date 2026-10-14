@@ -1,6 +1,7 @@
 using ExamBro.Core.Models;
 using ExamBro.Core.Security;
 using ExamBro.Core.Validation;
+using Xunit;
 
 namespace ExamBro.Tests;
 

@@ -18,14 +18,22 @@ public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
-        base.OnStartup(e);
-
-        // Initialize logging
-        Log.Logger = LoggerSetup.CreateLogger();
-        Log.Information("Aplikasi ExamBro.Config dimulai");
+        AppDomain.CurrentDomain.UnhandledException += (s, args) =>
+        {
+            WriteEmergencyCrashLog("AppDomain.UnhandledException", args.ExceptionObject as Exception);
+        };
+        DispatcherUnhandledException += (s, args) =>
+        {
+            WriteEmergencyCrashLog("DispatcherUnhandledException", args.Exception);
+        };
 
         try
         {
+            base.OnStartup(e);
+
+            Log.Logger = LoggerSetup.CreateLogger();
+            Log.Information("Aplikasi ExamBro.Config dimulai");
+
             string configPath = Constants.ConfigFilePath;
 
             // Scenario 1: First run - Config file does not exist
@@ -90,13 +98,53 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            Log.Fatal(ex, "Kesalahan tidak terduga saat inisialisasi aplikasi ExamBro.Config");
+            WriteEmergencyCrashLog("Fatal Config Startup Exception", ex);
             MessageBox.Show(
-                $"Terjadi kesalahan fatal saat memulai aplikasi:\n{ex.Message}",
+                $"Terjadi kesalahan fatal saat memulai aplikasi:\n{ex.Message}\n\nDetail telah dicatat di berkas crash.log.",
                 "Kesalahan Fatal",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
-            Shutdown();
+            Shutdown(1);
+        }
+    }
+
+    private static void WriteEmergencyCrashLog(string context, Exception? ex)
+    {
+        string message = $"[{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss.fff UTC}] [{context}] {ex?.GetType().FullName}: {ex?.Message}\n{ex?.StackTrace}\n";
+        if (ex?.InnerException != null)
+        {
+            message += $"InnerException: {ex.InnerException.GetType().FullName}: {ex.InnerException.Message}\n{ex.InnerException.StackTrace}\n";
+        }
+
+        string[] targets =
+        {
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "crash.log"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Constants.AppName, "crash.log"),
+            Path.Combine(Path.GetTempPath(), "LouisVoxExamBroConfig_crash.log")
+        };
+
+        foreach (string target in targets)
+        {
+            try
+            {
+                string? dir = Path.GetDirectoryName(target);
+                if (!string.IsNullOrWhiteSpace(dir) && !Directory.Exists(dir))
+                {
+                    Directory.CreateDirectory(dir);
+                }
+                File.AppendAllText(target, message);
+            }
+            catch
+            {
+            }
+        }
+
+        try
+        {
+            Log.Fatal(ex, "Emergency Crash Dump: {Context}", context);
+        }
+        catch
+        {
         }
     }
 
@@ -146,5 +194,6 @@ public partial class App : Application
         Log.Information("Aplikasi ExamBro.Config ditutup (ExitCode: {ExitCode})", e.ApplicationExitCode);
         Log.CloseAndFlush();
         base.OnExit(e);
+        Environment.Exit(e.ApplicationExitCode);
     }
 }

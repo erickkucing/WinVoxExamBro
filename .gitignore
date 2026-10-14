@@ -1,0 +1,44 @@
+## Ignore Visual Studio & .NET temporary / build artifacts
+[Bb]in/
+[Oo]bj/
+[Dd]ist/
+[Aa]rtifacts/
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+
+## Visual Studio & Rider cache files
+.vs/
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.launch
+
+## Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+build/
+bld/
+
+## Logs & caches
+*.log
+*.tmp
+*.bak
+*.swp
+*~
+.cache/
+
+## Inno Setup output
+Output/
+
+## OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,4 +1,5 @@
 using ExamBro.Core.Security;
+using Xunit;
 
 namespace ExamBro.Tests;
 

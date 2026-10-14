@@ -965,18 +965,35 @@ public partial class ExamWindow : Window
         }
     }
 
+    private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        // Fallback for dev mode where low-level keyboard hook is not installed
+        if (_isDevSafe && (e.Key == Key.Escape || (Keyboard.Modifiers.HasFlag(ModifierKeys.Control) && (e.Key == Key.C || e.Key == Key.B))))
+        {
+            ShowExitConfirmation();
+            e.Handled = true;
+        }
+    }
+
     // Proctor Exit & Lock Screen Handling
+
+    private bool _isExitDialogOpen;
 
     private void ShowExitConfirmation()
     {
+        if (_isExitDialogOpen) return;
+        _isExitDialogOpen = true;
+
         if (Mouse.Captured != null) Mouse.Capture(null);
         _focusGuard?.SetSuspended(true);
+        _keyboardHook?.SetSuspended(true);
         SetWebOverlayActive(true);
         try
         {
             var dialog = new ExitDialog(_config)
             {
-                Owner = this
+                Owner = this,
+                Topmost = true
             };
 
             if (dialog.ShowDialog() == true)
@@ -987,8 +1004,10 @@ public partial class ExamWindow : Window
         }
         finally
         {
+            _isExitDialogOpen = false;
             if (Mouse.Captured != null) Mouse.Capture(null);
             SetWebOverlayActive(false);
+            _keyboardHook?.SetSuspended(false);
             _focusGuard?.SetSuspended(false);
             _focusGuard?.ReclaimFocus();
         }

@@ -23,10 +23,28 @@ public static class UrlMatcher
         if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(pattern))
             return false;
 
-        // Convert wildcard pattern to regex:
-        //   * → .*   (greedy, any chars)
-        //   everything else is escaped
-        string escaped = Regex.Escape(pattern).Replace(@"\*", ".*");
+        string trimmedPattern = pattern.Trim();
+
+        // 192.168.0.0 local subnet and prefix matching (covers all 192.168.* addresses)
+        if (trimmedPattern.Equals("192.168.0.0", StringComparison.OrdinalIgnoreCase) ||
+            trimmedPattern.Equals("192.168.0.0/16", StringComparison.OrdinalIgnoreCase) ||
+            trimmedPattern.Equals("192.168.*", StringComparison.OrdinalIgnoreCase) ||
+            trimmedPattern.Equals("192.168.0.0/*", StringComparison.OrdinalIgnoreCase))
+        {
+            if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            {
+                if (uri.Host.StartsWith("192.168.", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            if (url.Contains("://192.168.", StringComparison.OrdinalIgnoreCase) ||
+                url.StartsWith("192.168.", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        // Standard glob matching (* -> .*)
+        string escaped = Regex.Escape(trimmedPattern).Replace(@"\*", ".*");
         string regexPattern = $"^{escaped}$";
 
         return Regex.IsMatch(url, regexPattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);

@@ -170,7 +170,7 @@ public static class ConfigEncryption
         }
     }
 
-    // ── Password-based export/import (.exbcfg) ────────────────────────
+    // Password-based export/import (.exbcfg)
 
     /// <summary>
     /// Encrypt config with a password for distribution. Format:
@@ -266,7 +266,7 @@ public static class ConfigEncryption
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
-    // ── Master key management (DPAPI) ─────────────────────────────────
+    // Master key management (DPAPI)
 
     /// <summary>
     /// Retrieves or creates a 256-bit master key protected by DPAPI

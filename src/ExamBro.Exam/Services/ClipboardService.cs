@@ -18,11 +18,12 @@ public class ClipboardService : IDisposable
     private HwndSource? _hwndSource;
     private readonly bool _allowClipboard;
     private bool _isListening;
+    private bool _isClearing;
     private bool _disposed;
 
     public event Action? ClipboardViolationDetected;
 
-    // ── Win32 P/Invoke Declarations ──────────────────────────────────────────
+    // Win32 P/Invoke Declarations
 
     /// <summary>
     /// OpenClipboard: Opens the clipboard for examination and prevents other applications
@@ -72,7 +73,7 @@ public class ClipboardService : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
 
-    // ── Constants ────────────────────────────────────────────────────────────
+    // Constants
 
     /// <summary>
     /// Sent when the contents of the clipboard have changed.
@@ -151,16 +152,29 @@ public class ClipboardService : IDisposable
     {
         if (msg == WM_CLIPBOARDUPDATE && !_allowClipboard)
         {
-            Log.Warning("Clipboard modification detected while clipboard access is disallowed");
-            ClearClipboard();
-            ClipboardViolationDetected?.Invoke();
-            handled = true;
+            if (_isClearing)
+            {
+                return IntPtr.Zero;
+            }
+
+            try
+            {
+                _isClearing = true;
+                Log.Warning("Clipboard modification detected while clipboard access is disallowed");
+                ClearClipboard();
+                ClipboardViolationDetected?.Invoke();
+                handled = true;
+            }
+            finally
+            {
+                _isClearing = false;
+            }
         }
 
         return IntPtr.Zero;
     }
 
-    // ── IDisposable ──────────────────────────────────────────────────────────
+    // IDisposable
 
     public void Dispose()
     {

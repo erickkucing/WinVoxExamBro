@@ -1,8 +1,10 @@
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
+using ExamBro.Core;
 using ExamBro.Core.Models;
 using ExamBro.Core.Security;
+using ExamBro.Exam.Helpers;
 using Serilog;
 
 namespace ExamBro.Exam.Views;
@@ -25,6 +27,13 @@ public partial class ExitDialog : Window
     {
         InitializeComponent();
         _config = config;
+
+        byte[] logoBytes = BrandingHelper.ResolveLogoBytes(_config.General.LogoBase64, _config.General.LogoPath);
+        var logoImage = ImageHelper.CreateImageSource(logoBytes);
+        if (logoImage != null)
+        {
+            Icon = logoImage;
+        }
 
         _lockoutTimer = new DispatcherTimer
         {

@@ -20,7 +20,7 @@ public class ScreenProtectionService : IDisposable
     private readonly List<SecondaryScreenOverlayWindow> _overlayWindows = new();
     private bool _disposed;
 
-    // ── Win32 P/Invoke Declarations ──────────────────────────────────────────
+    // Win32 P/Invoke Declarations
 
     /// <summary>
     /// Stores the display affinity setting for a window.
@@ -60,7 +60,7 @@ public class ScreenProtectionService : IDisposable
     private delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, ref RECT lprcMonitor, IntPtr dwData);
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct RECT
+    public struct RECT
     {
         public int Left;
         public int Top;
@@ -265,7 +265,7 @@ public class ScreenProtectionService : IDisposable
         _overlayWindows.Clear();
     }
 
-    // ── IDisposable ──────────────────────────────────────────────────────────
+    // IDisposable
 
     public void Dispose()
     {

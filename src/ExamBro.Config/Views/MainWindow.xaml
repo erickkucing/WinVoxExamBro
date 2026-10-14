@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:ExamBro.Config.ViewModels"
-        Title="ExamBro - Pengaturan &amp; Konfigurasi Ujian"
+        Title="{Binding AppTitle, StringFormat='{}Pengaturan - {0}'}"
         Height="720" Width="1040"
         MinHeight="600" MinWidth="850"
         WindowStartupLocation="CenterScreen"
@@ -22,9 +22,14 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0">
-                    <TextBlock Text="ExamBro Configuration Manager" FontSize="18" FontWeight="Bold" Foreground="White"/>
-                    <TextBlock Text="Konfigurasi Keamanan Kiosk Browser &amp; Kebijakan Ujian Berbasis Komputer" FontSize="12" Foreground="#BBDEFB" Margin="0,2,0,0"/>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="40" Height="40" CornerRadius="8" Background="#1E293B" Margin="0,0,12,0" VerticalAlignment="Center">
+                        <Image Source="{Binding LogoPreview}" Width="36" Height="36" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+                    </Border>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="{Binding AppTitle, StringFormat='{}{0} - Konfigurasi'}" FontSize="18" FontWeight="Bold" Foreground="White"/>
+                        <TextBlock Text="Konfigurasi Keamanan Kiosk Browser &amp; Kebijakan Ujian Berbasis Komputer" FontSize="12" Foreground="#BBDEFB" Margin="0,2,0,0"/>
+                    </StackPanel>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Content="Uji Start URL" Command="{Binding TestUrlCommand}" Style="{StaticResource SecondaryButton}" Margin="0,0,10,0"/>
@@ -86,21 +91,36 @@
                             </Border>
                         </GroupBox>
 
-                        <!-- GroupBox Tampilan -->
-                        <GroupBox Header="Tampilan &amp; Antarmuka Pengguna">
+                        <!-- GroupBox Tampilan, Nama Aplikasi & Logo -->
+                        <GroupBox Header="Tampilan, Nama Aplikasi &amp; Logo">
                             <StackPanel Margin="6">
                                 <CheckBox Content="Tampilkan toolbar navigasi atas pada jendela ujian" 
                                           IsChecked="{Binding ShowToolbar}" 
-                                          Margin="0,0,0,10"/>
+                                          Margin="0,0,0,12"/>
 
-                                <TextBlock Text="Berkas Logo Lembaga / Sekolah:" FontWeight="SemiBold" Margin="0,0,0,4"/>
-                                <Grid Margin="0,0,0,4">
+                                <TextBlock Text="Logo &amp; Ikon Aplikasi (Otomatis Menjadi Ikon Aplikasi &amp; Jendela):" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                                <Grid Margin="0,0,0,6">
                                     <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="80"/>
                                         <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBox Text="{Binding LogoPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
-                                    <Button Grid.Column="1" Content="Telusuri..." Style="{StaticResource SecondaryButton}" Command="{Binding BrowseLogoCommand}"/>
+                                    <Border Width="72" Height="72" Background="#F1F5F9" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="6" VerticalAlignment="Center">
+                                        <Image Source="{Binding LogoPreview}" Width="64" Height="64" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="12,0,0,0">
+                                        <Grid Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox Text="{Binding LogoPath, UpdateSourceTrigger=PropertyChanged}" IsReadOnly="True" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                            <Button Grid.Column="1" Content="Pilih Logo &amp; Ikon Baru..." Style="{StaticResource PrimaryButton}" Command="{Binding BrowseLogoCommand}"/>
+                                        </Grid>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="Gunakan Logo Default" Style="{StaticResource SecondaryButton}" Command="{Binding ResetLogoCommand}" Margin="0,0,8,0"/>
+                                            <TextBlock Text="Mendukung .png, .jpg, .ico (tersimpan otomatis dalam konfigurasi)" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </StackPanel>
                                 </Grid>
                             </StackPanel>
                         </GroupBox>
@@ -229,6 +249,43 @@
                                 <CheckBox Content="Izinkan Notifikasi Web" IsChecked="{Binding AllowNotifications}" Margin="0,0,24,4"/>
                             </WrapPanel>
                         </GroupBox>
+
+                        <!-- Audio Web CBT -->
+                        <GroupBox Header="Pengaturan Audio &amp; Suara Web CBT">
+                            <StackPanel Margin="6">
+                                <TextBlock Text="Kontrol keluaran audio dari halaman web CBT (listening audio, video soal ujian, suara alarm)." 
+                                           FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" Margin="0,0,0,8"/>
+
+                                <CheckBox Content="Bisukan Seluruh Suara Web CBT (Mute Audio)" 
+                                          IsChecked="{Binding MuteAudio}"
+                                          FontWeight="SemiBold"
+                                          Margin="0,0,0,10"/>
+
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="50"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Volume Suara Web CBT:" VerticalAlignment="Center" FontWeight="SemiBold" Margin="0,0,16,0"/>
+                                    <Slider Grid.Column="1" 
+                                            Minimum="0" 
+                                            Maximum="100" 
+                                            TickFrequency="5" 
+                                            IsSnapToTickEnabled="True" 
+                                            Value="{Binding VolumePercent}" 
+                                            VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="2" 
+                                               Text="{Binding VolumePercent, StringFormat='{}{0}%'}" 
+                                               FontWeight="Bold" 
+                                               HorizontalAlignment="Right" 
+                                               VerticalAlignment="Center" 
+                                               Foreground="#2563EB"/>
+                                </Grid>
+                                <TextBlock Text="Geser slider untuk menentukan batas volume audio pada web CBT (0% bisu hingga 100% volume penuh)." 
+                                           FontSize="11.5" Foreground="{StaticResource SecondaryTextBrush}" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </GroupBox>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -266,10 +323,35 @@
                         <!-- Deteksi Lingkungan -->
                         <GroupBox Header="Deteksi Lingkungan Virtual &amp; Jarak Jauh">
                             <StackPanel Margin="6">
-                                <CheckBox Content="Blokir Lingkungan Mesin Virtual (VMware, VirtualBox, Hyper-V, QEMU)" 
-                                          IsChecked="{Binding BlockVirtualMachine}"/>
+                                <CheckBox Content="Verifikasi Perangkat Fisik (Deteksi &amp; Blokir Mesin Virtual / Anti-VM)" 
+                                          IsChecked="{Binding BlockVirtualMachine}"
+                                          FontWeight="SemiBold"
+                                          Margin="0,0,0,3"/>
+                                <TextBlock Text="Centang untuk mewajibkan peserta menggunakan perangkat fisik asli (bukan VMware, VirtualBox, Hyper-V, atau QEMU). Hilangkan centang jika ingin menonaktifkan deteksi VM agar ujian dapat dijalankan pada mesin virtual atau PC pengujian." 
+                                           FontSize="11.5" 
+                                           Foreground="{StaticResource SecondaryTextBrush}" 
+                                           TextWrapping="Wrap" 
+                                           Margin="24,0,0,10"/>
+
+                                <CheckBox Content="Periksa Adapter Jaringan Virtual (Virtual Ethernet / VM MAC OUI)" 
+                                          IsChecked="{Binding CheckVirtualNetworkAdapters}"
+                                          FontWeight="SemiBold"
+                                          Margin="0,0,0,3"/>
+                                <TextBlock Text="Centang untuk memeriksa adapter jaringan virtual (seperti VMware, VirtualBox, Hyper-V, atau WSL). Nonaktifkan (uncheck) opsi ini jika komputer fisik peserta memiliki adapter virtual terpasang agar tidak terdeteksi sebagai mesin virtual." 
+                                           FontSize="11.5" 
+                                           Foreground="{StaticResource SecondaryTextBrush}" 
+                                           TextWrapping="Wrap" 
+                                           Margin="24,0,0,10"/>
+
                                 <CheckBox Content="Blokir Sesi Remote Desktop (RDP, VNC, AnyDesk, TeamViewer)" 
-                                          IsChecked="{Binding BlockRemoteSession}"/>
+                                          IsChecked="{Binding BlockRemoteSession}"
+                                          FontWeight="SemiBold"
+                                          Margin="0,0,0,3"/>
+                                <TextBlock Text="Mencegah peserta ujian mengakses komputer dari jarak jauh melalui RDP atau aplikasi remote control." 
+                                           FontSize="11.5" 
+                                           Foreground="{StaticResource SecondaryTextBrush}" 
+                                           TextWrapping="Wrap" 
+                                           Margin="24,0,0,4"/>
                             </StackPanel>
                         </GroupBox>
 

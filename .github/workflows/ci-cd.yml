@@ -1,0 +1,160 @@
+name: CI/CD Pipeline - WinVoxExamBro
+
+on:
+  push:
+    branches: [ "master", "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "master", "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+  actions: read
+
+jobs:
+  test:
+    name: Build & Test (.NET 8 WPF xUnit)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore NuGet Dependencies
+        run: dotnet restore ExamBro.sln
+
+      - name: Build Solution (Release)
+        run: dotnet build ExamBro.sln -c Release --no-restore
+
+      - name: Run Unit Tests
+        run: dotnet test tests/ExamBro.Tests/ExamBro.Tests.csproj -c Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
+
+      - name: Upload Unit Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults
+          path: tests/ExamBro.Tests/TestResults/*.trx
+
+  publish-and-package:
+    name: Publish Binaries & Build Installer
+    needs: test
+    runs-on: windows-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore NuGet Dependencies
+        run: dotnet restore ExamBro.sln
+
+      - name: Publish ExamBro Kiosk Browser (win-x64 Single-File)
+        run: |
+          dotnet publish src/ExamBro.Exam/ExamBro.Exam.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -o dist/ExamBro.Exam
+
+      - name: Publish ExamBro Config Tool (win-x64 Single-File)
+        run: |
+          dotnet publish src/ExamBro.Config/ExamBro.Config.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -o dist/ExamBro.Config
+
+      - name: Create Portable Distribution Package
+        shell: pwsh
+        run: |
+          $portableDir = "dist/portable/WinVoxExamBro"
+          New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+          Copy-Item "dist/ExamBro.Exam/ExamBro.Exam.exe" "$portableDir/"
+          Copy-Item "dist/ExamBro.Config/ExamBro.Config.exe" "$portableDir/"
+          if (Test-Path "PETUNJUK_PENGGUNAAN_DAN_INSTALASI.txt") {
+            Copy-Item "PETUNJUK_PENGGUNAAN_DAN_INSTALASI.txt" "$portableDir/"
+          }
+          if (Test-Path "README.md") {
+            Copy-Item "README.md" "$portableDir/"
+          }
+          Compress-Archive -Path "$portableDir/*" -DestinationPath "dist/WinVoxExamBro-Portable-win-x64.zip" -Force
+          Write-Host "Portable package created at dist/WinVoxExamBro-Portable-win-x64.zip"
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Compile Inno Setup Installer
+        shell: cmd
+        run: |
+          "C:\Program Files (x86)\Inno Setup 6\iscc.exe" installer\setup.iss
+
+      - name: Upload Portable Zip Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinVoxExamBro-Portable-win-x64
+          path: dist/WinVoxExamBro-Portable-win-x64.zip
+
+      - name: Upload Setup Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ExamBro-Setup-Installer
+          path: dist/installer/*.exe
+
+  release:
+    name: GitHub Release
+    needs: publish-and-package
+    runs-on: windows-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-artifacts/WinVoxExamBro-Portable-win-x64/WinVoxExamBro-Portable-win-x64.zip
+            release-artifacts/ExamBro-Setup-Installer/*.exe
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

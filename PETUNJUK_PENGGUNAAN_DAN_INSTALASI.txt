@@ -1,0 +1,282 @@
+================================================================================
+          PANDUAN LENGKAP PENGGUNAAN & INSTALASI LOUISVOX EXAMBRO
+================================================================================
+Aplikasi Browser Ujian Resmi (Kiosk Mode & Anti-Curang)
+Mendukung Windows 10 & Windows 11 (64-bit)
+100% Siap Digunakan Secara Offline / Intranet Sekolah
+Kompatibel Penuh dengan Sistem projectCBT (Port 8008)
+================================================================================
+
+DAFTAR ISI:
+1. PENGENALAN APLIKASI
+2. STRUKTUR BERKAS PORTABLE
+3. PANDUAN INSTALASI & PERSIAPAN
+4. PANDUAN PENGGUNAAN UNTUK PESERTA UJIAN (SISWA)
+5. PANDUAN PENGATURAN UNTUK PROKTOR / ADMINISTRATOR
+6. FITUR KEAMANAN & ANTI-CURANG KHUSUS
+7. KETAHANAN MATI LISTRIK / CRASH TIBA-TIBA (POWER-LOSS RESILIENCE)
+8. BYPASS OTOMATIS SERTIFIKAT SSL TIDAK VALID (LOCAL HTTPS)
+9. PEMECAHAN MASALAH (TROUBLESHOOTING)
+
+================================================================================
+1. PENGENALAN APLIKASI
+================================================================================
+LouisVox ExamBro adalah peramban ujian komputer (Computer-Based Test / CBT) 
+berbasis native Windows (.NET 8 WPF x64). Aplikasi ini dirancang untuk memastikan 
+peserta ujian HANYA dapat mengakses halaman soal ujian yang ditentukan oleh sekolah, 
+tanpa bisa membuka aplikasi lain, berselancar ke situs luar, menyalin jawaban, 
+atau merekam layar monitor.
+
+Karakteristik Utama:
+- Bekerja 100% Offline: Tidak membutuhkan koneksi internet publik. Dapat berjalan
+  sempurna di jaringan LAN sekolah, Wi-Fi lokal, atau server mandiri (localhost).
+- Bypass Otomatis Peringatan SSL: Jika server lokal menggunakan HTTPS dengan
+  sertifikat mandiri (self-signed) atau tidak valid, aplikasi langsung melewatinya
+  secara otomatis tanpa menampilkan layar peringatan merah "Not Secure".
+- Proteksi Mati Lampu: Jika komputer tiba-tiba mati saat ujian berlangsung, sesi
+  dapat langsung dibuka kembali tanpa error "session crash" atau error lock.
+- Hak Administrator Penuh: Menjamin sistem operasi memberikan izin mutlak bagi
+  aplikasi untuk memblokir seluruh tombol pintasan keyboard berbahaya.
+
+================================================================================
+2. STRUKTUR BERKAS PORTABLE
+================================================================================
+Di dalam folder portable ini terdapat berkas-berkas berikut:
+
+1. LouisVox ExamBro.exe (Ukuran: ~157 MB)
+   - Program utama yang dijalankan di komputer siswa.
+   - Berupa executable tunggal mandiri (self-contained single-file).
+   - Sudah menyertakan runtime .NET 8 di dalamnya, sehingga tidak perlu mengunduh
+     atau menginstal .NET terpisah.
+   - Otomatis meminta hak akses Administrator (UAC).
+
+2. LouisVox ExamBro Pengaturan.exe (Ukuran: ~157 MB)
+   - Program manajemen pengaturan khusus proktor/guru/administrator.
+   - Digunakan untuk mengubah Start URL, whitelist, nama aplikasi, logo,
+     kebijakan keamanan, dan kata sandi.
+
+3. exambro.cfg (Ukuran: ~374 KB)
+   - Berkas konfigurasi terenkripsi militer (AES-256-GCM).
+   - Menyimpan seluruh aturan, URL ujian, password ter-hash, serta logo sekolah.
+
+4. logo.png & exam.ico
+   - Berkas logo lambang resmi (SMKK St. Louis Surabaya) dan ikon aplikasi.
+
+5. PETUNJUK_PENGGUNAAN_DAN_INSTALASI.txt
+   - Berkas panduan teks resmi ini.
+
+================================================================================
+3. PANDUAN INSTALASI & PERSIAPAN
+================================================================================
+
+METODE 1: MODE PORTABLE (SANGAT DISARANKAN & PALING CEPAT)
+----------------------------------------------------------
+Metode ini tidak memerlukan instalasi ke sistem Windows:
+1. Salin seluruh isi folder "Portable" ini ke flashdisk atau folder lokal komputer 
+   siswa (misalnya di "D:\LouisVoxExamBro\" atau "C:\Ujian\").
+2. Pastikan file "exambro.cfg" berada di folder yang sama dengan "LouisVox ExamBro.exe".
+3. Aplikasi langsung siap dijalankan.
+
+METODE 2: PENYEBARAN MASSAL VIA JARINGAN / LAB KOMPUTER
+-------------------------------------------------------
+Untuk lab komputer sekolah:
+1. Atur konfigurasi pada satu komputer proktor menggunakan "LouisVox ExamBro Pengaturan.exe".
+2. Salin file "exambro.cfg" yang sudah disimpan ke seluruh komputer siswa.
+3. Buat pintasan (shortcut) di Desktop siswa yang mengarah ke "LouisVox ExamBro.exe".
+
+SYARAT PERANGKAT:
+- Sistem Operasi: Windows 10 (versi 1809 ke atas) atau Windows 11 (64-bit).
+- WebView2 Runtime: Microsoft Edge WebView2 Runtime (bawaan Windows 10/11 modern).
+- Arsitektur: x64 (AMD64 / Intel 64-bit).
+
+================================================================================
+4. PANDUAN PENGGUNAAN UNTUK PESERTA UJIAN (SISWA)
+================================================================================
+
+1. MEMULAI UJIAN:
+   - Klik kanan pada "LouisVox ExamBro.exe", lalu pilih "Run as administrator"
+     (atau klik dua kali, dan klik "Yes" pada jendela persetujuan UAC Windows).
+   - Jendela "Pemeriksaan Kesiapan Sistem" akan muncul memeriksa integritas PC.
+   - Jika terdeteksi aplikasi terlarang (misal browser luar atau screen recorder), 
+     tombol "⚡ Tutup Aplikasi Terlarang" akan muncul. Cukup klik tombol tersebut 
+     untuk menutup paksa seluruh proses terlarang sekaligus tanpa perlu repot mencarinya.
+   - Program bawaan Windows (CMD, PowerShell, Task Manager) yang berjalan di latar belakang 
+     secara headless / service tanpa jendela aktif desktop bebas dari false positive.
+   - Jika semua pemeriksaan lolos, layar akan otomatis terkunci ke mode Kiosk
+     dan langsung memuat halaman login ujian.
+
+2. SELAMA UJIAN:
+   - Layar berada dalam mode fullscreen penuh tanpa border.
+   - Taskbar Windows dan menu Start disembunyikan.
+   - Tombol-tombol pintasan terlarang dinonaktifkan:
+     * Tombol Windows (Start Menu)
+     * Alt + Tab (Pindah aplikasi)
+     * Alt + F4 (Tutup jendela)
+     * Ctrl + Shift + Esc / Ctrl + Alt + Del (Task Manager)
+     * PrintScreen / Win + Shift + S (Screenshot)
+     * F12 / Ctrl + Shift + I (Inspect Element / DevTools)
+   - Perlindungan hardware layar aktif (layar menjadi hitam jika direkam oleh OBS / AnyDesk).
+
+3. MENYELESAIKAN UJIAN DENGAN TOMBOL LOGOUT:
+   - Jika peserta menekan tombol "Selesai" di web projectCBT dan diarahkan ke URL
+     selesai (/exam/finished/...), aplikasi akan otomatis menutup dalam hitungan detik.
+
+4. KELUAR SECARA MANUAL DENGAN IZIN PENGAWAS:
+   - Jika siswa harus keluar sebelum selesai:
+     a. Pengawas menekan kombinasi tombol: Ctrl + C + B
+        (Tekan tombol C lalu B secara cepat sambil menahan tombol Ctrl).
+        Atau klik tombol "Keluar" di toolbar atas jika toolbar diaktifkan.
+     b. Masukkan Kata Sandi Pengawas (default: proctor123).
+     c. Klik tombol "Konfirmasi Keluar".
+     d. Aplikasi akan menutup secara aman dan memulihkan Taskbar Windows.
+
+================================================================================
+5. PANDUAN PENGATURAN UNTUK PROKTOR / ADMINISTRATOR
+================================================================================
+
+1. MEMBUKA PENGATURAN:
+   - Klik kanan pada "LouisVox ExamBro Pengaturan.exe" -> "Run as administrator".
+   - Masukkan Kata Sandi Administrator:
+     * Kata Sandi Bawaan: admin123
+   - Jendela Pengaturan LouisVox ExamBro akan terbuka.
+
+2. MENGATUR START URL (ALAMAT SERVER UJIAN):
+   - Masuk ke Tab 1: "Umum".
+   - Pada kolom "Alamat URL Halaman Awal Ujian", ketik alamat server Anda.
+     Nilai bawaan: http://192.168.70.9
+     Dapat disesuaikan ke alamat lain (misal: http://localhost:8008).
+   - Klik "Uji Start URL" di pojok kanan atas untuk memastikan server dapat dijangkau.
+
+3. MENGUBAH NAMA APLIKASI DAN LOGO SEKOLAH:
+   - Masuk ke Tab 1: "Umum".
+   - Ubah kolom "Judul Jendela Aplikasi" (misal: "Ujian Akhir Semester SMKK St. Louis").
+   - Pada bagian "Tampilan, Nama Aplikasi & Logo":
+     * Klik tombol "Pilih Logo & Ikon Baru...".
+     * Pilih berkas gambar logo sekolah Anda (.png, .jpg, atau .ico).
+     * Pratinjau logo dan ikon jendela aplikasi akan langsung berubah seketika.
+     * Untuk kembali ke lambang asli, klik "Gunakan Logo Default".
+
+4. MENGATUR WHITELIST URL & SUBNET LOKAL:
+   - Masuk ke Tab 2: "Navigasi & URL".
+   - Whitelist bawaan secara otomatis mencakup:
+     * 192.168.0.0 (seluruh IP jaringan lokal dengan prefix 192.168.*.*)
+     * *192.168.*
+     * http://192.168.*/* dan https://192.168.*/*
+   - Anda dapat menambahkan IP/domain khusus lainnya jika diperlukan.
+
+5. MENGATUR AUDIO & SUARA WEB CBT:
+   - Masuk ke Tab 2: "Navigasi & URL" -> bagian "Pengaturan Audio & Suara Web CBT".
+   - Kontrol keluaran suara:
+     * Opsi "Bisukan Seluruh Suara Web CBT (Mute Audio)":
+       Centang jika ingin mematikan semua audio/suara dari halaman ujian web.
+     * Slider "Volume Suara Web CBT (0% - 100%)":
+       Geser slider untuk menentukan batas volume suara (misal untuk soal listening).
+
+6. MENGATUR KEBIJAKAN KEAMANAN & MESIN VIRTUAL (VM):
+   - Masuk ke Tab 3: "Keamanan".
+   - Pada bagian "Deteksi Lingkungan Virtual & Jarak Jauh":
+     * Opsi "Verifikasi Perangkat Fisik (Deteksi & Blokir Mesin Virtual / Anti-VM)":
+       - Centang: Mewajibkan peserta menggunakan perangkat fisik asli (menolak jika VM).
+       - Hilangkan Centang (Disabled): Mengizinkan aplikasi dijalankan di mesin virtual,
+         laptop uji coba, atau komputer yang memiliki fitur Hyper-V/WSL aktif.
+         Saat dimatikan, pemeriksaan VM pada tahap pra-ujian langsung berstatus "Lolos".
+     * Opsi "Blokir Sesi Remote Desktop":
+       - Mencegah siswa dikendalikan dari jarak jauh (RDP, AnyDesk, VNC, TeamViewer).
+
+7. MENGGANTI KATA SANDI ADMIN & PENGAWAS:
+   - Masuk ke Tab 5: "Administrator & Pengawas".
+   - Klik "Ganti Password Administrator" untuk mengubah kata sandi masuk menu setting.
+   - Klik "Ganti Password Pengawas" untuk mengubah kata sandi keluar ujian (Ctrl+C+B).
+   - Anda juga dapat mengubah kombinasi tombol pintasan keluar di tab ini.
+
+8. MENYIMPAN PENGATURAN:
+   - Setelah selesai mengubah pengaturan, klik tombol hijau "Simpan Konfigurasi"
+     di pojok kanan atas jendela.
+   - Pengaturan akan otomatis dienkripsi dan disimpan ke file "exambro.cfg".
+
+================================================================================
+6. FITUR KEAMANAN & ANTI-CURANG KHUSUS
+================================================================================
+1. Integrasi Langsung dengan projectCBT:
+   - Mengirimkan User-Agent resmi:
+     "Mozilla/5.0 ... ExamBro/1.0.0 ExamBrowser/1.0.0 LouisVox/1.0.0"
+   - Mengirimkan header validasi:
+     X-ExamBro-Version, X-Exambrowser, X-Exambro, X-Exam-Browser, X-CBT-Browser
+   - JavaScript Bridge dua arah (window.LouisVoxExamApp):
+     * Sinkronisasi strike pelanggaran dan penguncian otomatis.
+     * Mendukung pembukaan gambar soal besar (setLightboxActive) tanpa false positive.
+
+2. Proteksi Screenshot & Perekaman Layar:
+   - Memanfaatkan Windows API hardware-level "SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)".
+   - Menghalangi Snipping Tool, OBS Studio, Bandicam, dan sharing screen Discord/Zoom.
+
+3. Pemindai Proses Latar Belakang (Process Blacklist):
+   - Memindai proses setiap 1 detik.
+   - Memblokir peramban luar (Chrome, Firefox, Edge biasa), remote desktop (AnyDesk, TeamViewer),
+     aplikasi curang (Cheat Engine, Wireshark, AutoHotkey), dan console aktif (CMD, PowerShell).
+   - Smart Background Filter: Tool bawaan Windows (CMD, PowerShell, Task Manager) yang berjalan
+     di latar belakang secara headless tanpa jendela desktop aktif tidak akan dianggap pelanggaran.
+   - Tombol "⚡ Tutup Aplikasi Terlarang" tersedia di jendela pra-ujian untuk menghentikan proses
+     terlarang secara otomatis dalam 1 klik.
+
+================================================================================
+7. KETAHANAN MATI LISTRIK / CRASH TIBA-TIBA (POWER-LOSS RESILIENCE)
+================================================================================
+Aplikasi ini dirancang khusus untuk kondisi di lapangan di mana komputer siswa
+dapat sewaktu-waktu mengalami mati listrik mendadak, baterai habis, atau restart paksa:
+
+1. Penanganan Abandoned Mutex:
+   Ketika Windows restart setelah mati mendadak, aplikasi yang dibuka kembali
+   tidak akan terkendala oleh mutex lama yang belum dilepas. Mutex otomatis diambil alih.
+
+2. Pembersihan Kunci Sesi Chromium/WebView2:
+   Saat crash, Chromium sering meninggalkan file "SingletonLock". LouisVox ExamBro
+   secara otomatis membersihkan file lock tersebut sebelum memuat peramban, serta
+   mengaktifkan flag "--disable-session-crashed-bubble" agar siswa tidak melihat dialog
+   "Edge closed unexpectedly" atau "Restore pages?".
+
+3. Pemulihan Otomatis Status Kiosk:
+   Jika terjadi crash, nilai asli Registry dan Taskbar tersimpan di recovery state.
+   Saat aplikasi dibuka kembali, sistem otomatis diselaraskan kembali ke kondisi normal.
+
+================================================================================
+8. BYPASS OTOMATIS SERTIFIKAT SSL TIDAK VALID (LOCAL HTTPS)
+================================================================================
+Banyak sekolah menggunakan server lokal berbasis HTTPS dengan sertifikat self-signed 
+(bukan dari CA publik seperti Let's Encrypt), yang biasanya memicu halaman peringatan
+merah "Your connection is not private / NET::ERR_CERT_AUTHORITY_INVALID".
+
+LouisVox ExamBro dilengkapi dengan:
+1. Event Handler "ServerCertificateErrorDetected":
+   Setiap kegagalan validasi sertifikat server otomatis dieksekusi dengan tindakan
+   "AlwaysAllow", sehingga peramban langsung menampilkan halaman web tanpa terputus.
+2. Flag Engine "--ignore-certificate-errors" dan "--allow-insecure-localhost":
+   Membypass verifikasi sertifikat di level engine Chromium internal.
+
+================================================================================
+9. PEMECAHAN MASALAH (TROUBLESHOOTING)
+================================================================================
+
+TANYA: Taskbar tidak muncul setelah komputer mati lampu dan tidak sempat keluar normal?
+JAWAB: Buka Command Prompt (Run as administrator), lalu ketik:
+       "LouisVox ExamBro.exe" --restore
+       Tekan Enter. Taskbar dan pengaturan sistem akan langsung dipulihkan seketika.
+
+TANYA: Muncul pesan "Konfigurasi tidak valid, hubungi pengawas"?
+JAWAB: Pastikan file "exambro.cfg" berada di satu folder yang sama dengan "LouisVox ExamBro.exe".
+       Jika file hilang, jalankan "LouisVox ExamBro Pengaturan.exe" untuk membuat konfigurasi baru.
+
+TANYA: Muncul pesan "Aplikasi wajib dijalankan sebagai Administrator"?
+JAWAB: Klik kanan berkas "LouisVox ExamBro.exe" -> pilih "Run as administrator".
+
+TANYA: Peserta tidak bisa mengakses server ujian lokal?
+JAWAB: Pastikan kabel LAN / Wi-Fi lokal tersambung dan IP server lokal dapat di-ping.
+       Pastikan Start URL di aplikasi Pengaturan telah disetel ke IP yang tepat 
+       (misalnya: http://192.168.1.100:8008).
+
+================================================================================
+KREDENSIAL BAWAAN (DEFAULT):
+- Kata Sandi Administrator : admin123
+- Kata Sandi Pengawas/Exit : proctor123
+- Tombol Pintasan Keluar   : Ctrl + C + B
+================================================================================

@@ -40,10 +40,15 @@ public partial class TestUrlWindow : Window
                 Constants.AppName,
                 "WebView2TestProfile");
 
-            var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
+            var envOptions = new CoreWebView2EnvironmentOptions("--ignore-certificate-errors --allow-insecure-localhost");
+            var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder, envOptions);
             await webView.EnsureCoreWebView2Async(env);
 
             _isInitialized = true;
+            webView.CoreWebView2.ServerCertificateErrorDetected += (s, args) =>
+            {
+                args.Action = CoreWebView2ServerCertificateErrorAction.AlwaysAllow;
+            };
             webView.NavigationStarting += WebView_NavigationStarting;
             webView.NavigationCompleted += WebView_NavigationCompleted;
 

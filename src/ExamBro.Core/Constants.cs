@@ -6,10 +6,10 @@ namespace ExamBro.Core;
 public static class Constants
 {
     public const string AppVersion = "1.0.0";
-    public const string AppName = "ExamBro";
+    public const string AppName = "LouisVox ExamBro";
 
     /// <summary>Named mutex to enforce single-instance execution.</summary>
-    public const string MutexName = @"Global\ExamBro_SingleInstance_Mutex";
+    public const string MutexName = @"Global\LouisVoxExamBro_SingleInstance_Mutex";
 
     /// <summary>AES-256-GCM nonce length in bytes.</summary>
     public const int NonceLength = 12;
@@ -90,11 +90,20 @@ public static class Constants
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             AppName, "WebView2Profile");
 
-    /// <summary>Rolling log folder under ProgramData.</summary>
-    public static string LogFolder =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            AppName, "logs");
+    /// <summary>Rolling log folder under LocalAppData (user-writable without elevation).</summary>
+    public static string LogFolder
+    {
+        get
+        {
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (!string.IsNullOrWhiteSpace(localAppData))
+            {
+                return Path.Combine(localAppData, AppName, "logs");
+            }
+
+            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
+        }
+    }
 
     /// <summary>
     /// DPAPI-protected master key store path. Checks local application folder first,

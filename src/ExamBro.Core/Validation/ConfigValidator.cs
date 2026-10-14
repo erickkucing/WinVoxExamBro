@@ -17,7 +17,7 @@ public static class ConfigValidator
     {
         var errors = new List<ValidationError>();
 
-        // ── General ────────────────────────────────────────────────
+        // General
         if (string.IsNullOrWhiteSpace(config.General.StartUrl))
         {
             errors.Add(new("General.StartUrl",
@@ -47,7 +47,7 @@ public static class ConfigValidator
             }
         }
 
-        // ── Navigation ─────────────────────────────────────────────
+        // Navigation
         if (config.Navigation.AllowedUrlPatterns == null || config.Navigation.AllowedUrlPatterns.Count == 0)
         {
             errors.Add(new("Navigation.AllowedUrlPatterns",
@@ -97,7 +97,7 @@ public static class ConfigValidator
                 "Waktu auto-close harus lebih dari 0 detik.", ValidationSeverity.Error));
         }
 
-        // ── Admin passwords ────────────────────────────────────────
+        // Admin passwords
         if (string.IsNullOrWhiteSpace(config.Admin.AdminPasswordHash) ||
             string.IsNullOrWhiteSpace(config.Admin.AdminPasswordSalt))
         {
@@ -124,7 +124,7 @@ public static class ConfigValidator
                 "Durasi lockout harus > 0 detik.", ValidationSeverity.Error));
         }
 
-        // ── Logging ────────────────────────────────────────────────
+        // Logging
         if (!string.IsNullOrWhiteSpace(config.Logging.WebhookUrl))
         {
             if (!Uri.TryCreate(config.Logging.WebhookUrl, UriKind.Absolute, out Uri? wh) ||
@@ -140,6 +140,17 @@ public static class ConfigValidator
                 errors.Add(new("Logging.WebhookHmacKey",
                     "HMAC key harus diisi jika webhook diaktifkan.",
                     ValidationSeverity.Warning));
+            }
+        }
+
+        // Audio
+        if (config.Audio != null)
+        {
+            if (config.Audio.VolumePercent < 0 || config.Audio.VolumePercent > 100)
+            {
+                errors.Add(new("Audio.VolumePercent",
+                    "Volume audio harus berada dalam rentang 0% hingga 100%.",
+                    ValidationSeverity.Error));
             }
         }
 

@@ -32,7 +32,7 @@ public static class EnvironmentDetector
 {
     private static readonly ILogger Log = Serilog.Log.ForContext(typeof(EnvironmentDetector));
 
-    // ── Win32 P/Invoke Declarations ──────────────────────────────────────────
+    // Win32 P/Invoke Declarations
 
     /// <summary>
     /// SM_REMOTESESSION (0x1000): Nonzero if the current session is remotely controlled.
@@ -82,7 +82,7 @@ public static class EnvironmentDetector
     [DllImport("kernel32.dll", ExactSpelling = true)]
     private static extern IntPtr GetCurrentProcess();
 
-    // ── Known VM Signature Tables ────────────────────────────────────────────
+    // Known VM Signature Tables
 
     private static readonly string[] KnownVmKeywords =
     {
@@ -126,18 +126,18 @@ public static class EnvironmentDetector
         "525400"  // QEMU / KVM
     };
 
-    // ── Public API ───────────────────────────────────────────────────────────
+    // Public API
 
     /// <summary>
     /// Runs all environment checks and aggregates the findings.
     /// </summary>
-    public static EnvironmentCheckResult CheckEnvironment(bool checkVm = true, bool checkRdp = true)
+    public static EnvironmentCheckResult CheckEnvironment(bool checkVm = true, bool checkRdp = true, bool checkVirtualNetwork = false)
     {
         bool isVm = false;
         string? vmReason = null;
         if (checkVm)
         {
-            (isVm, vmReason) = DetectVirtualMachine();
+            (isVm, vmReason) = DetectVirtualMachine(checkVirtualNetwork);
         }
 
         bool isRdp = false;
@@ -186,8 +186,9 @@ public static class EnvironmentDetector
 
     /// <summary>
     /// Detects if the current system appears to be running inside a virtual machine.
+    /// When checkVirtualNetwork is false, virtual ethernet adapter checks are skipped.
     /// </summary>
-    public static (bool IsVm, string? Reason) DetectVirtualMachine()
+    public static (bool IsVm, string? Reason) DetectVirtualMachine(bool checkVirtualNetwork = false)
     {
         try
         {
@@ -215,12 +216,15 @@ public static class EnvironmentDetector
                 return (true, regReason);
             }
 
-            // 4. Network adapter MAC address OUI check
-            var (macDetected, macReason) = CheckMacAddresses();
-            if (macDetected)
+            // 4. Network adapter MAC address OUI check (optional, configurable)
+            if (checkVirtualNetwork)
             {
-                Log.Warning("VM detected via MAC OUI: {Reason}", macReason);
-                return (true, macReason);
+                var (macDetected, macReason) = CheckMacAddresses();
+                if (macDetected)
+                {
+                    Log.Warning("VM detected via MAC OUI: {Reason}", macReason);
+                    return (true, macReason);
+                }
             }
         }
         catch (Exception ex)
@@ -316,7 +320,7 @@ public static class EnvironmentDetector
         return (false, null);
     }
 
-    // ── Helper Detection Methods ─────────────────────────────────────────────
+    // Helper Detection Methods
 
     private static (bool Detected, string? Reason) CheckWmiComputerSystem()
     {
@@ -418,13 +422,12 @@ public static class EnvironmentDetector
                 }
             }
 
-            // Known VM Guest Services
+            // Known VM Guest additions and drivers (exclusive to guest environments)
             string[] vmServicePaths =
             {
                 @"SYSTEM\CurrentControlSet\Services\VBoxGuest",
                 @"SYSTEM\CurrentControlSet\Services\VBoxMouse",
                 @"SYSTEM\CurrentControlSet\Services\vmguestlibrary",
-                @"SYSTEM\CurrentControlSet\Services\vmicheartbeat",
                 @"SOFTWARE\VMware, Inc.\VMware Tools",
                 @"SOFTWARE\Oracle\VirtualBox Guest Additions"
             };

@@ -11,11 +11,8 @@ public partial class MainWindow : Window
 {
     public MainViewModel ViewModel { get; }
 
-    public MainWindow(ExamConfig config)
+    public MainWindow(ExamConfig config) : this(new MainViewModel(config))
     {
-        InitializeComponent();
-        ViewModel = new MainViewModel(config);
-        DataContext = ViewModel;
     }
 
     public MainWindow(MainViewModel viewModel)
@@ -23,5 +20,25 @@ public partial class MainWindow : Window
         InitializeComponent();
         ViewModel = viewModel;
         DataContext = ViewModel;
+
+        if (ViewModel.LogoPreview != null)
+        {
+            Icon = ViewModel.LogoPreview;
+        }
+
+        ViewModel.PropertyChanged += (s, e) =>
+        {
+            if (e.PropertyName == nameof(MainViewModel.LogoPreview) && ViewModel.LogoPreview != null)
+            {
+                Icon = ViewModel.LogoPreview;
+            }
+        };
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        base.OnClosed(e);
+        Application.Current?.Shutdown(0);
+        Environment.Exit(0);
     }
 }
