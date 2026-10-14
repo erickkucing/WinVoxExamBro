@@ -30,11 +30,11 @@ public class KeyboardHookService : IDisposable
     private readonly List<uint> _exitVkCodes = new();
 
     // Key chord tracker for combinations like Ctrl + C + B
-    private uint _lastChordVk;
-    private long _lastChordTimestamp;
-    private const long ChordWindowMs = 750;
+    private readonly HashSet<uint> _pressedChordKeys = new();
+    private long _chordWindowStartTimestamp;
+    private const long ChordWindowMs = 2500;
 
-    // ── Win32 P/Invoke Declarations ──────────────────────────────────────────
+    // Win32 P/Invoke Declarations
 
     /// <summary>
     /// Installs an application-defined hook procedure into a hook chain.
@@ -104,7 +104,7 @@ public class KeyboardHookService : IDisposable
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
 
-    // ── Constants and Structs ────────────────────────────────────────────────
+    // Constants and Structs
 
     private const int WH_KEYBOARD_LL = 13;
     private const int WM_KEYDOWN = 0x0100;
@@ -119,6 +119,7 @@ public class KeyboardHookService : IDisposable
     private const int VK_ESCAPE = 0x1B;
     private const int VK_SPACE = 0x20;
     private const int VK_SNAPSHOT = 0x2C; // Print Screen
+    private const int VK_DELETE = 0x2E;
     private const int VK_LEFT = 0x25;
     private const int VK_RIGHT = 0x27;
     private const int VK_APPS = 0x5D; // Application / Context Menu
@@ -190,7 +191,7 @@ public class KeyboardHookService : IDisposable
         }
     }
 
-    // ── Hook Callback Procedure ──────────────────────────────────────────────
+    // Hook Callback Procedure
 
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
@@ -207,7 +208,7 @@ public class KeyboardHookService : IDisposable
                 bool ctrlDown = IsKeyDown(VK_CONTROL);
                 bool shiftDown = IsKeyDown(VK_SHIFT);
 
-                // ── Check Exit Shortcut (Proctor Exit) ──
+                // Check Exit Shortcut (Proctor Exit)
                 if (CheckExitShortcut(vkCode, ctrlDown, shiftDown, altDown))
                 {
                     Log.Information("Exit shortcut triggered by user");
@@ -215,11 +216,18 @@ public class KeyboardHookService : IDisposable
                     return (IntPtr)1; // Consume key
                 }
 
-                // ── Keyboard Policy Evaluation ──
-                if (ShouldBlockKey(vkCode, altDown, ctrlDown, shiftDown, out string reason))
+                // Keyboard Policy Evaluation
+                if (ShouldBlockKey(vkCode, altDown, ctrlDown, shiftDown, out string reason, out bool isViolation))
                 {
-                    Log.Warning("Blocked key combination: {Reason} (VK: 0x{VkCode:X2})", reason, vkCode);
-                    BlockedKeyDetected?.Invoke(reason);
+                    if (isViolation)
+                    {
+                        Log.Warning("Violation key combination detected: {Reason} (VK: 0x{VkCode:X2})", reason, vkCode);
+                        BlockedKeyDetected?.Invoke(reason);
+                    }
+                    else
+                    {
+                        Log.Information("Suppressed key combination without violation: {Reason} (VK: 0x{VkCode:X2})", reason, vkCode);
+                    }
                     return (IntPtr)1; // Block key
                 }
             }
@@ -228,8 +236,46 @@ public class KeyboardHookService : IDisposable
         return CallNextHookEx(_hookId, nCode, wParam, lParam);
     }
 
-    private bool ShouldBlockKey(uint vkCode, bool altDown, bool ctrlDown, bool shiftDown, out string reason)
+    private bool ShouldBlockKey(uint vkCode, bool altDown, bool ctrlDown, bool shiftDown, out string reason, out bool isViolation)
     {
+        isViolation = false;
+
+        // Exemption: keys that belong to the exit shortcut are never flagged as violations
+        if (_exitVkCodes.Contains(vkCode))
+        {
+            bool modMatch = (!_exitNeedsCtrl || ctrlDown) &&
+                            (!_exitNeedsShift || shiftDown) &&
+                            (!_exitNeedsAlt || altDown);
+            if (modMatch)
+            {
+                reason = string.Empty;
+                return false;
+            }
+        }
+
+        // 0. Ctrl + Alt + Delete (SAS) - ONLY combination counted as violation
+        bool isDeleteKey = vkCode == (uint)VK_DELETE || IsKeyDown(VK_DELETE);
+        if (isDeleteKey && ctrlDown && altDown)
+        {
+            reason = "Kombinasi Ctrl + Alt + Delete";
+            isViolation = true;
+            return true;
+        }
+
+        // 0b. General Ctrl + Alt combinations (Ctrl+Alt+Tab, Ctrl+Alt+End, etc.) - block without violation
+        if (ctrlDown && altDown)
+        {
+            reason = "Kombinasi Ctrl + Alt";
+            return true;
+        }
+
+        // 0c. Delete with Ctrl or Alt held - block without violation
+        if (vkCode == (uint)VK_DELETE && (ctrlDown || altDown))
+        {
+            reason = "Kombinasi Ctrl/Alt + Delete";
+            return true;
+        }
+
         // 1. Windows Keys (LWIN, RWIN) - ALWAYS block
         if (vkCode == VK_LWIN || vkCode == VK_RWIN)
         {
@@ -328,6 +374,13 @@ public class KeyboardHookService : IDisposable
                 case (uint)VK_TAB: // Ctrl + Tab
                     reason = $"Ctrl + {(char)vkCode} (Pintasan Peramban)";
                     return true;
+                case 0xBB: // VK_OEM_PLUS (+/=)
+                case 0xBD: // VK_OEM_MINUS (-/_)
+                case 0x6B: // VK_ADD (Num +)
+                case 0x6D: // VK_SUBTRACT (Num -)
+                case 0x30: // '0' (Reset Zoom)
+                    reason = "Ctrl + Zoom (Ukuran Tampilan Terkunci)";
+                    return true;
             }
         }
 
@@ -370,12 +423,13 @@ public class KeyboardHookService : IDisposable
         return false;
     }
 
-    // ── Helper Methods ───────────────────────────────────────────────────────
+    // Helper Methods
 
     private static bool IsKeyDown(int virtualKey)
     {
-        // High-order bit is 1 if key is down
-        return (GetKeyState(virtualKey) & 0x8000) != 0;
+        // Check both GetAsyncKeyState (physical hardware key state across system)
+        // and GetKeyState (thread message queue state). High-order bit is 1 if key is down.
+        return ((GetAsyncKeyState(virtualKey) & 0x8000) != 0) || ((GetKeyState(virtualKey) & 0x8000) != 0);
     }
 
     private void ParseExitShortcut(string shortcut)
@@ -433,12 +487,17 @@ public class KeyboardHookService : IDisposable
     private bool CheckExitShortcut(uint vkCode, bool ctrlDown, bool shiftDown, bool altDown)
     {
         // Check modifier keys
-        if (_exitNeedsCtrl && !ctrlDown) return false;
-        if (!_exitNeedsCtrl && ctrlDown) return false;
-        if (_exitNeedsShift && !shiftDown) return false;
-        if (!_exitNeedsShift && shiftDown) return false;
-        if (_exitNeedsAlt && !altDown) return false;
-        if (!_exitNeedsAlt && altDown) return false;
+        if ((_exitNeedsCtrl && !ctrlDown) ||
+            (!_exitNeedsCtrl && ctrlDown) ||
+            (_exitNeedsShift && !shiftDown) ||
+            (!_exitNeedsShift && shiftDown) ||
+            (_exitNeedsAlt && !altDown) ||
+            (!_exitNeedsAlt && altDown))
+        {
+            _pressedChordKeys.Clear();
+            _chordWindowStartTimestamp = 0;
+            return false;
+        }
 
         // Single-key combination (e.g. Ctrl+Shift+Q or F10)
         if (_exitVkCodes.Count == 1)
@@ -451,10 +510,13 @@ public class KeyboardHookService : IDisposable
         {
             if (!_exitVkCodes.Contains(vkCode))
             {
+                _pressedChordKeys.Clear();
+                _chordWindowStartTimestamp = 0;
                 return false;
             }
 
-            // Check if all other keys in the chord are currently held down
+            // 1. Simultaneous physical press check:
+            // vkCode was just pressed. If all other keys in _exitVkCodes are currently down physically:
             bool allOtherKeysDown = true;
             foreach (uint k in _exitVkCodes)
             {
@@ -467,28 +529,37 @@ public class KeyboardHookService : IDisposable
 
             if (allOtherKeysDown)
             {
-                _lastChordVk = 0;
+                _pressedChordKeys.Clear();
+                _chordWindowStartTimestamp = 0;
                 return true;
             }
 
-            // Rapid chord window: user pressed the keys in quick succession while holding Ctrl
+            // 2. Sequential chord window check:
+            // User taps chord keys in sequence while holding the required modifiers.
             long now = Stopwatch.GetTimestamp();
-            long elapsedMs = (now - _lastChordTimestamp) * 1000 / Stopwatch.Frequency;
+            long elapsedMs = _chordWindowStartTimestamp == 0 ? 0 : (now - _chordWindowStartTimestamp) * 1000 / Stopwatch.Frequency;
 
-            if (_lastChordVk != 0 && _lastChordVk != vkCode && _exitVkCodes.Contains(_lastChordVk) && elapsedMs <= ChordWindowMs)
+            if (_pressedChordKeys.Count == 0 || elapsedMs > ChordWindowMs)
             {
-                _lastChordVk = 0;
-                return true;
+                _pressedChordKeys.Clear();
+                _chordWindowStartTimestamp = now;
             }
 
-            _lastChordVk = vkCode;
-            _lastChordTimestamp = now;
+            _pressedChordKeys.Add(vkCode);
+
+            // Check if all required keys have been pressed within the chord window
+            if (_exitVkCodes.All(k => _pressedChordKeys.Contains(k)))
+            {
+                _pressedChordKeys.Clear();
+                _chordWindowStartTimestamp = 0;
+                return true;
+            }
         }
 
         return false;
     }
 
-    // ── IDisposable ──────────────────────────────────────────────────────────
+    // IDisposable
 
     public void Dispose()
     {

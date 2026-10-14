@@ -21,8 +21,9 @@ public class FocusGuardService : IDisposable
     private bool _disposed;
 
     public event Action? FocusLost;
+    public event Action? DesktopSwitched;
 
-    // ── Win32 P/Invoke Declarations ──────────────────────────────────────────
+    // Win32 P/Invoke Declarations
 
     /// <summary>
     /// Sets an event hook function for a range of events.
@@ -86,9 +87,20 @@ public class FocusGuardService : IDisposable
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
 
-    // ── Constants & Delegates ────────────────────────────────────────────────
+    /// <summary>
+    /// Retrieves the handle to the ancestor of the specified window.
+    /// </summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
+
+    // Constants & Delegates
+
+    private const uint GA_PARENT = 1;
+    private const uint GA_ROOT = 2;
+    private const uint GA_ROOTOWNER = 3;
 
     private const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
+    private const uint EVENT_SYSTEM_DESKTOPSWITCH = 0x0020;
     private const uint WINEVENT_OUTOFCONTEXT = 0x0000;
     private const uint WINEVENT_SKIPOWNPROCESS = 0x0002;
 
@@ -105,9 +117,9 @@ public class FocusGuardService : IDisposable
     {
         _winEventDelegate = OnWinEvent;
 
-        _backupTimer = new DispatcherTimer(DispatcherPriority.Normal)
+        _backupTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
-            Interval = TimeSpan.FromMilliseconds(500)
+            Interval = TimeSpan.FromSeconds(1)
         };
         _backupTimer.Tick += OnBackupTimerTick;
     }
@@ -120,10 +132,10 @@ public class FocusGuardService : IDisposable
         _targetHwnd = targetHwnd;
         if (_targetHwnd == IntPtr.Zero) return;
 
-        // Hook system-wide foreground changes
+        // Hook system-wide foreground and desktop changes
         _hookHandle = SetWinEventHook(
             EVENT_SYSTEM_FOREGROUND,
-            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_DESKTOPSWITCH,
             IntPtr.Zero,
             _winEventDelegate,
             0,
@@ -141,7 +153,6 @@ public class FocusGuardService : IDisposable
         }
 
         _backupTimer.Start();
-        ReclaimFocus();
     }
 
     /// <summary>
@@ -168,6 +179,42 @@ public class FocusGuardService : IDisposable
         _suspended = suspended;
     }
 
+    /// <summary>
+    /// Determines whether the given HWND belongs to the ExamBro process, its window tree,
+    /// or its legitimate child processes (such as WebView2 renderers).
+    /// </summary>
+    private bool IsOurWindow(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero || _targetHwnd == IntPtr.Zero)
+            return false;
+
+        if (hwnd == _targetHwnd)
+            return true;
+
+        try
+        {
+            IntPtr root = GetAncestor(hwnd, GA_ROOT);
+            if (root == _targetHwnd)
+                return true;
+
+            IntPtr rootOwner = GetAncestor(hwnd, GA_ROOTOWNER);
+            if (rootOwner == _targetHwnd)
+                return true;
+
+            GetWindowThreadProcessId(hwnd, out uint pid);
+            if (pid == (uint)Environment.ProcessId)
+                return true;
+
+            // Check if the window belongs to a child/descendant process (like WebView2 renderers)
+            var childPids = ProcessMonitorService.GetDescendantPids(Environment.ProcessId);
+            if (childPids.Contains((int)pid))
+                return true;
+        }
+        catch { }
+
+        return false;
+    }
+
     private void OnWinEvent(
         IntPtr hWinEventHook,
         uint eventType,
@@ -177,11 +224,22 @@ public class FocusGuardService : IDisposable
         uint dwEventThread,
         uint dwmsEventTime)
     {
-        if (_suspended || _targetHwnd == IntPtr.Zero) return;
-
-        if (eventType == EVENT_SYSTEM_FOREGROUND && hwnd != _targetHwnd && hwnd != IntPtr.Zero)
+        if (eventType == EVENT_SYSTEM_DESKTOPSWITCH)
         {
-            Log.Warning("Foreground change detected! New foreground window handle: 0x{Handle:X}", hwnd.ToInt64());
+            Log.Warning("Desktop switch detected (e.g. Winlogon / SAS)!");
+            DesktopSwitched?.Invoke();
+            ReclaimFocus();
+            return;
+        }
+
+        if (eventType == EVENT_SYSTEM_FOREGROUND)
+        {
+            if (hwnd == IntPtr.Zero || IsOurWindow(hwnd))
+            {
+                return;
+            }
+
+            Log.Warning("Foreground change detected! Foreign window handle: 0x{Handle:X}", hwnd.ToInt64());
             FocusLost?.Invoke();
             ReclaimFocus();
         }
@@ -192,44 +250,33 @@ public class FocusGuardService : IDisposable
         if (_suspended || _targetHwnd == IntPtr.Zero) return;
 
         IntPtr currentFore = GetForegroundWindow();
-        if (currentFore != _targetHwnd && currentFore != IntPtr.Zero)
+        if (currentFore == IntPtr.Zero || IsOurWindow(currentFore))
         {
-            Log.Warning("Backup timer detected loss of focus. Current foreground: 0x{Handle:X}", currentFore.ToInt64());
-            FocusLost?.Invoke();
-            ReclaimFocus();
+            return;
         }
+
+        Log.Warning("Backup timer detected loss of focus. Foreign foreground: 0x{Handle:X}", currentFore.ToInt64());
+        FocusLost?.Invoke();
+        ReclaimFocus();
     }
 
     /// <summary>
-    /// Forcefully brings the exam window to the foreground using thread input attachment.
+    /// Forcefully brings the exam window to the foreground if a foreign window steals focus.
     /// </summary>
     public void ReclaimFocus()
     {
-        if (_targetHwnd == IntPtr.Zero) return;
+        if (_targetHwnd == IntPtr.Zero || _suspended) return;
 
         try
         {
             IntPtr foreHwnd = GetForegroundWindow();
-            if (foreHwnd == _targetHwnd)
+            if (foreHwnd != IntPtr.Zero && IsOurWindow(foreHwnd))
             {
                 return;
             }
 
-            uint foreThread = GetWindowThreadProcessId(foreHwnd, out _);
-            uint appThread = GetCurrentThreadId();
-
-            if (foreThread != 0 && foreThread != appThread)
-            {
-                AttachThreadInput(foreThread, appThread, true);
-                BringWindowToTop(_targetHwnd);
-                SetForegroundWindow(_targetHwnd);
-                AttachThreadInput(foreThread, appThread, false);
-            }
-            else
-            {
-                BringWindowToTop(_targetHwnd);
-                SetForegroundWindow(_targetHwnd);
-            }
+            BringWindowToTop(_targetHwnd);
+            SetForegroundWindow(_targetHwnd);
         }
         catch (Exception ex)
         {
@@ -237,7 +284,7 @@ public class FocusGuardService : IDisposable
         }
     }
 
-    // ── IDisposable ──────────────────────────────────────────────────────────
+    // IDisposable
 
     public void Dispose()
     {

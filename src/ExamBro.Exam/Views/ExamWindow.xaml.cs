@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Interop;
 using Microsoft.Web.WebView2.Core;
 using ExamBro.Core;
@@ -50,11 +52,18 @@ public partial class ExamWindow : Window
         _viewModel = new ExamViewModel(_config);
         DataContext = _viewModel;
 
+        Title = _viewModel.AppTitle;
+        if (_viewModel.LogoImage != null)
+        {
+            Icon = _viewModel.LogoImage;
+        }
+
         // Wire ViewModel Commands
         _viewModel.GoBackRequested += OnGoBackRequested;
         _viewModel.GoForwardRequested += OnGoForwardRequested;
         _viewModel.ReloadRequested += OnReloadRequested;
         _viewModel.GoHomeRequested += OnGoHomeRequested;
+        _viewModel.ZoomFactorChangeRequested += OnZoomFactorChangeRequested;
         _viewModel.RequestExitRequested += ShowExitConfirmation;
 
         // Overlay Events
@@ -166,7 +175,7 @@ public partial class ExamWindow : Window
             _keyboardHook.BlockedKeyDetected += desc =>
             {
                 _violationManager.RecordViolation(ViolationEventType.BlockedKey, desc);
-                NotifyWebAntiCheatViolation("devtools_open", $"Shortcut keyboard terlarang: {desc}");
+                NotifyWebAntiCheatViolation("window_blur", $"Kombinasi tombol terlarang: {desc}");
             };
             _keyboardHook.ExitShortcutRequested += () =>
             {
@@ -179,10 +188,15 @@ public partial class ExamWindow : Window
         if (!_isDevSafe)
         {
             _focusGuard = new FocusGuardService();
+            _focusGuard.DesktopSwitched += () =>
+            {
+                _violationManager.RecordViolation(ViolationEventType.BlockedKey, "Kombinasi Ctrl + Alt + Delete (SAS Desktop Switch)");
+                NotifyWebAntiCheatViolation("window_blur", "Kombinasi tombol terlarang: Ctrl + Alt + Delete");
+            };
             _focusGuard.FocusLost += () =>
             {
-                _violationManager.RecordViolation(ViolationEventType.FocusLost);
-                NotifyWebAntiCheatViolation("window_blur", "Fokus jendela ExamBro berpindah di sistem operasi");
+                // Reclaim focus silently without penalizing the student or recording a violation
+                Log.Information("Focus lost to foreign window, reclaiming focus silently without penalty.");
             };
             _focusGuard.Start(_hwnd);
         }
@@ -191,8 +205,11 @@ public partial class ExamWindow : Window
         _processMonitor = new ProcessMonitorService(_config);
         _processMonitor.BlockedProcessDetected += (name, pid) =>
         {
-            _violationManager.RecordViolation(ViolationEventType.BlockedProcess, $"{name} (PID: {pid})");
-            NotifyWebAntiCheatSevereViolation($"Aplikasi terlarang terdeteksi di Windows: {name} (PID: {pid})");
+            Dispatcher.Invoke(() =>
+            {
+                _violationManager.RecordViolation(ViolationEventType.BlockedProcess, $"{name} (PID: {pid})");
+                NotifyWebAntiCheatSevereViolation($"Aplikasi terlarang terdeteksi di Windows: {name} (PID: {pid})");
+            });
         };
         _processMonitor.Start();
 
@@ -220,45 +237,156 @@ public partial class ExamWindow : Window
 
     private async Task InitializeWebView2Async()
     {
+        string dataFolder = Constants.WebView2DataFolder;
+        // Valid Chromium arguments only (NO --inprivate or --user-agent-product which cause E_INVALIDARG)
+        string additionalArgs = "--disable-session-crashed-bubble --hide-crash-restore-bubble --no-recovery-component --disable-features=Translate,OptimizationHints,RestoreTabs --ignore-certificate-errors --ignore-certificate-errors-spki-list --allow-insecure-localhost";
+
+        try
+        {
+            // Set dark background color immediately so webView never renders as a blinding white rectangle
+            webView.DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 15, 23, 42);
+        }
+        catch { }
+
+        try
+        {
+            // Clean stale lock files from sudden computer shutdown / power cut
+            string singletonLock = Path.Combine(dataFolder, "SingletonLock");
+            if (File.Exists(singletonLock))
+            {
+                try { File.Delete(singletonLock); } catch { }
+            }
+        }
+        catch { }
+
+        bool initialized = false;
         try
         {
             Log.Information("Initializing WebView2 browser environment with projectCBT synchronization...");
-
-            string dataFolder = Constants.WebView2DataFolder;
-            string userAgentArg = $"--user-agent-product=\"{Constants.UserAgentSuffix.Trim()}\"";
-            string additionalArgs = $"{userAgentArg} --inprivate --disable-features=Translate,OptimizationHints";
-
             var envOptions = new CoreWebView2EnvironmentOptions(additionalArgs);
             var env = await CoreWebView2Environment.CreateAsync(null, dataFolder, envOptions);
-
             await webView.EnsureCoreWebView2Async(env);
+            initialized = true;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Initial WebView2 environment creation failed. Purging crash artifacts from sudden shutdown and retrying...");
+            try
+            {
+                if (Directory.Exists(dataFolder))
+                {
+                    try { Directory.Delete(dataFolder, recursive: true); } catch { }
+                }
 
+                var envOptions = new CoreWebView2EnvironmentOptions(additionalArgs);
+                var env = await CoreWebView2Environment.CreateAsync(null, dataFolder, envOptions);
+                await webView.EnsureCoreWebView2Async(env);
+                initialized = true;
+            }
+            catch (Exception retryEx)
+            {
+                Log.Error(retryEx, "Fatal failure initializing WebView2 engine after crash recovery");
+                ShowErrorPage();
+                return;
+            }
+        }
+
+        if (!initialized || webView.CoreWebView2 == null)
+        {
+            Log.Error("WebView2 failed to initialize CoreWebView2");
+            ShowErrorPage();
+            return;
+        }
+
+        try
+        {
             ConfigureWebViewSettings();
             AttachWebViewEvents();
 
             // Inject projectCBT JavaScript bridge before document creation
             await InjectProjectCbtBridgeAsync();
 
-            // Clear cache and cookies for privacy isolation
-            await webView.CoreWebView2.Profile.ClearBrowsingDataAsync();
+            // Apply CBT Audio volume and mute settings
+            await ApplyAudioSettingsAsync();
+
+            // Clear cache and cookies for privacy isolation asynchronously without blocking navigation
+            try
+            {
+                _ = webView.CoreWebView2.Profile.ClearBrowsingDataAsync();
+            }
+            catch { }
 
             Log.Information("Navigating to start URL: {Url}", _resolvedStartUrl);
             webView.CoreWebView2.Navigate(_resolvedStartUrl);
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to initialize WebView2 engine");
+            Log.Error(ex, "Failed configuring WebView2 after initialization");
             ShowErrorPage();
         }
     }
 
     private async Task InjectProjectCbtBridgeAsync()
     {
-        // Bridge script providing window.LouisVoxExamApp and anti-blur suppression
         string bridgeScript = @"
 (function() {
     window.__louisvox_suppress_blur = false;
     window.__exambro_overlay_active = false;
+    window.__cbt_lightbox_active = false;
+
+    try {
+        const origGetAttr = Element.prototype.getAttribute;
+        Element.prototype.getAttribute = function(name) {
+            if (name === 'data-is-exambrowser' && this && this.id === 'cbt-anti-cheat-root') {
+                return '1';
+            }
+            return origGetAttr.apply(this, arguments);
+        };
+    } catch(e) {}
+
+    try {
+        const fsElemGetter = {
+            get: function() { return document.documentElement; },
+            configurable: true
+        };
+        Object.defineProperty(document, 'fullscreenElement', fsElemGetter);
+        Object.defineProperty(document, 'webkitFullscreenElement', fsElemGetter);
+        Object.defineProperty(document, 'mozFullScreenElement', fsElemGetter);
+    } catch(e) {}
+
+    try {
+        const resolveFs = function() {
+            try {
+                const evt = new Event('fullscreenchange');
+                document.dispatchEvent(evt);
+            } catch(e) {}
+            return Promise.resolve();
+        };
+        Element.prototype.requestFullscreen = resolveFs;
+        Element.prototype.webkitRequestFullscreen = resolveFs;
+        Element.prototype.mozRequestFullScreen = resolveFs;
+        Element.prototype.msRequestFullscreen = resolveFs;
+    } catch(e) {}
+
+    function dismissFullscreenGate() {
+        const root = document.getElementById('cbt-anti-cheat-root');
+        if (root) {
+            root.setAttribute('data-is-exambrowser', '1');
+        }
+        const gate = document.getElementById('anti-cheat-fullscreen-gate');
+        if (gate) {
+            gate.classList.add('hidden');
+            gate.classList.remove('flex');
+            gate.style.display = 'none';
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', dismissFullscreenGate);
+    } else {
+        dismissFullscreenGate();
+    }
+    setInterval(dismissFullscreenGate, 500);
 
     window.LouisVoxExamApp = {
         onWebExamConfig: function(maxStrikes, strikes, isLocked) {
@@ -286,6 +414,9 @@ public partial class ExamWindow : Window
         isAlarmOverlayActive: function() {
             return window.__exambro_overlay_active === true || window.__louisvox_suppress_blur === true;
         },
+        setLightboxActive: function(active) {
+            window.__cbt_lightbox_active = !!active;
+        },
         onWebSessionUnlocked: function(strikes) {
             try {
                 window.chrome.webview.postMessage(JSON.stringify({
@@ -308,6 +439,70 @@ public partial class ExamWindow : Window
         Log.Information("Injected LouisVoxExamApp JavaScript bridge for projectCBT.");
     }
 
+    private async Task ApplyAudioSettingsAsync()
+    {
+        if (webView?.CoreWebView2 == null)
+            return;
+
+        try
+        {
+            bool isMuted = _config.Audio?.MuteAudio == true || (_config.Audio?.VolumePercent ?? 100) <= 0;
+            webView.CoreWebView2.IsMuted = isMuted;
+
+            int volPercent = Math.Clamp(_config.Audio?.VolumePercent ?? 100, 0, 100);
+            double volumeRatio = volPercent / 100.0;
+            string volStr = volumeRatio.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+            string mutedStr = isMuted ? "true" : "false";
+
+            string audioScript = $@"
+(function() {{
+    const targetVolume = {volStr};
+    const isMuted = {mutedStr};
+
+    function enforceVolume(el) {{
+        try {{
+            if (el) {{
+                el.volume = targetVolume;
+                el.muted = isMuted;
+            }}
+        }} catch(e) {{}}
+    }}
+
+    const origPlay = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function() {{
+        enforceVolume(this);
+        return origPlay.apply(this, arguments);
+    }};
+
+    document.addEventListener('play', function(e) {{
+        if (e.target && e.target instanceof HTMLMediaElement) {{
+            enforceVolume(e.target);
+        }}
+    }}, true);
+
+    function applyAllMedia() {{
+        const allMedia = document.querySelectorAll('audio, video');
+        for (let i = 0; i < allMedia.length; i++) {{
+            enforceVolume(allMedia[i]);
+        }}
+    }}
+
+    if (document.readyState === 'loading') {{
+        document.addEventListener('DOMContentLoaded', applyAllMedia);
+    }} else {{
+        applyAllMedia();
+    }}
+}})();";
+
+            await webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(audioScript);
+            Log.Information("Applied CBT audio configuration: Muted={IsMuted}, Volume={VolumePercent}%", isMuted, volPercent);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to apply CBT audio settings to WebView2");
+        }
+    }
+
     private void ConfigureWebViewSettings()
     {
         var settings = webView.CoreWebView2.Settings;
@@ -316,21 +511,38 @@ public partial class ExamWindow : Window
         settings.AreDefaultContextMenusEnabled = false;
         settings.AreBrowserAcceleratorKeysEnabled = false;
         settings.IsStatusBarEnabled = false;
-        settings.IsZoomControlEnabled = _config.Navigation.AllowZoom;
+        settings.IsZoomControlEnabled = false;
+        settings.IsPinchZoomEnabled = false;
         settings.IsBuiltInErrorPageEnabled = false;
         settings.IsSwipeNavigationEnabled = false;
         settings.IsPasswordAutosaveEnabled = false;
         settings.IsGeneralAutofillEnabled = false;
+
+        try
+        {
+            string suffix = Constants.UserAgentSuffix.Trim();
+            string currentUa = settings.UserAgent;
+            string baseUa = string.IsNullOrWhiteSpace(currentUa)
+                ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0"
+                : currentUa;
+
+            if (!baseUa.Contains("ExamBrowser", StringComparison.OrdinalIgnoreCase))
+            {
+                settings.UserAgent = $"{baseUa} {suffix}";
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to customize UserAgent in settings");
+        }
     }
 
     private void AttachWebViewEvents()
     {
         var core = webView.CoreWebView2;
 
-        // 1. Add WebResourceRequested filter to inject projectCBT authentication & signature headers
-        core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
-        core.WebResourceRequested += OnWebResourceRequested;
-
+        core.ContainsFullScreenElementChanged += OnContainsFullScreenElementChanged;
+        core.ServerCertificateErrorDetected += OnServerCertificateErrorDetected;
         core.NavigationStarting += OnNavigationStarting;
         core.FrameNavigationStarting += OnFrameNavigationStarting;
         core.NewWindowRequested += OnNewWindowRequested;
@@ -339,26 +551,27 @@ public partial class ExamWindow : Window
         core.ProcessFailed += OnProcessFailed;
         core.WebMessageReceived += OnWebMessageReceived;
         core.NavigationCompleted += OnNavigationCompleted;
+        webView.ZoomFactorChanged += OnWebViewZoomFactorChanged;
     }
 
-    private void OnWebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
+    private void OnContainsFullScreenElementChanged(object? sender, object e)
     {
-        try
+        Dispatcher.Invoke(() =>
         {
-            // Injects ExamBrowser headers verified by projectCBT EnsureExamBrowser / SiteSetting::isExamBrowser
-            e.Request.Headers.SetHeader("X-ExamBro-Version", Constants.AppVersion);
-            e.Request.Headers.SetHeader("X-Exambrowser", "1");
-            e.Request.Headers.SetHeader("X-Exambro", "1");
-            e.Request.Headers.SetHeader("X-Exam-Browser", "1");
-            e.Request.Headers.SetHeader("X-CBT-Browser", "1");
-        }
-        catch
-        {
-            // best effort
-        }
+            if (Mouse.Captured != null)
+            {
+                Mouse.Capture(null);
+            }
+        });
     }
 
-    // ── WebView2 Event Handlers ──────────────────────────────────────────────
+    private void OnServerCertificateErrorDetected(object? sender, CoreWebView2ServerCertificateErrorDetectedEventArgs e)
+    {
+        Log.Warning("Server certificate warning automatically bypassed on {Uri} ({Status})", e.RequestUri, e.ErrorStatus);
+        e.Action = CoreWebView2ServerCertificateErrorAction.AlwaysAllow;
+    }
+
+    // WebView2 Event Handlers
 
     private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
     {
@@ -441,7 +654,7 @@ public partial class ExamWindow : Window
             CoreWebView2PermissionKind.Microphone => _config.Permissions.AllowMicrophone,
             CoreWebView2PermissionKind.Geolocation => _config.Permissions.AllowGeolocation,
             CoreWebView2PermissionKind.Notifications => _config.Permissions.AllowNotifications,
-            _ => false
+            _ => true
         };
 
         e.State = allowed ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
@@ -598,7 +811,11 @@ public partial class ExamWindow : Window
         _viewModel.CanGoBack = _config.Navigation.AllowBackForward && webView.CanGoBack;
         _viewModel.CanGoForward = _config.Navigation.AllowBackForward && webView.CanGoForward;
 
-        if (!e.IsSuccess && e.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
+        if (!e.IsSuccess && e.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled
+            && e.WebErrorStatus != CoreWebView2WebErrorStatus.CertificateCommonNameIsIncorrect
+            && e.WebErrorStatus != CoreWebView2WebErrorStatus.CertificateExpired
+            && e.WebErrorStatus != CoreWebView2WebErrorStatus.CertificateRevoked
+            && e.WebErrorStatus != CoreWebView2WebErrorStatus.CertificateIsInvalid)
         {
             Log.Warning("Navigation completed with failure status: {Status}", e.WebErrorStatus);
             ShowErrorPage();
@@ -609,13 +826,26 @@ public partial class ExamWindow : Window
     {
         try
         {
-            string html = GetErrorPageHtml();
-            webView.NavigateToString(html);
+            if (webView?.CoreWebView2 != null)
+            {
+                string html = GetErrorPageHtml();
+                webView.NavigateToString(html);
+            }
+            else
+            {
+                pnlWebViewInitError.Visibility = Visibility.Visible;
+            }
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to render error page");
+            pnlWebViewInitError.Visibility = Visibility.Visible;
         }
+    }
+
+    private void BtnInitErrorExit_Click(object sender, RoutedEventArgs e)
+    {
+        CloseGracefully();
     }
 
     private static string GetErrorPageHtml()
@@ -640,10 +870,36 @@ public partial class ExamWindow : Window
                "<button onclick=\"window.chrome.webview.postMessage('retry')\">Coba Lagi</button></body></html>";
     }
 
-    // ── Navigation Command Callbacks ─────────────────────────────────────────
+    protected override void OnPreviewMouseUp(MouseButtonEventArgs e)
+    {
+        base.OnPreviewMouseUp(e);
+        if (Mouse.Captured != null)
+        {
+            Mouse.Capture(null);
+        }
+    }
+
+    private void Toolbar_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (Mouse.Captured != null)
+        {
+            Mouse.Capture(null);
+        }
+    }
+
+    private void Toolbar_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (Mouse.Captured != null)
+        {
+            Mouse.Capture(null);
+        }
+    }
+
+    // Navigation Command Callbacks
 
     private void OnGoBackRequested()
     {
+        if (Mouse.Captured != null) Mouse.Capture(null);
         if (_config.Navigation.AllowBackForward && webView.CanGoBack)
         {
             webView.GoBack();
@@ -652,6 +908,7 @@ public partial class ExamWindow : Window
 
     private void OnGoForwardRequested()
     {
+        if (Mouse.Captured != null) Mouse.Capture(null);
         if (_config.Navigation.AllowBackForward && webView.CanGoForward)
         {
             webView.GoForward();
@@ -660,6 +917,7 @@ public partial class ExamWindow : Window
 
     private void OnReloadRequested()
     {
+        if (Mouse.Captured != null) Mouse.Capture(null);
         if (_config.Navigation.AllowReload)
         {
             webView.Reload();
@@ -668,13 +926,50 @@ public partial class ExamWindow : Window
 
     private void OnGoHomeRequested()
     {
+        if (Mouse.Captured != null) Mouse.Capture(null);
         webView.CoreWebView2?.Navigate(_resolvedStartUrl);
     }
 
-    // ── Proctor Exit & Lock Screen Handling ──────────────────────────────────
+    private void OnZoomFactorChangeRequested(double zoom)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            if (webView.CoreWebView2 != null)
+            {
+                webView.ZoomFactor = zoom;
+            }
+        });
+    }
+
+    private void OnWebViewZoomFactorChanged(object? sender, EventArgs e)
+    {
+        double current = webView.ZoomFactor;
+        if (current < 0.50 || current > 1.50)
+        {
+            double clamped = Math.Clamp(current, 0.50, 1.50);
+            webView.ZoomFactor = clamped;
+            _viewModel.SetZoom(clamped);
+        }
+        else
+        {
+            _viewModel.SetZoom(current);
+        }
+    }
+
+    private void OnWindowPreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        // Lock scroll zoom: suppress wheel when Ctrl is pressed
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            e.Handled = true;
+        }
+    }
+
+    // Proctor Exit & Lock Screen Handling
 
     private void ShowExitConfirmation()
     {
+        if (Mouse.Captured != null) Mouse.Capture(null);
         _focusGuard?.SetSuspended(true);
         SetWebOverlayActive(true);
         try
@@ -692,6 +987,7 @@ public partial class ExamWindow : Window
         }
         finally
         {
+            if (Mouse.Captured != null) Mouse.Capture(null);
             SetWebOverlayActive(false);
             _focusGuard?.SetSuspended(false);
             _focusGuard?.ReclaimFocus();
@@ -717,7 +1013,6 @@ public partial class ExamWindow : Window
     {
         if (!_isClosingCleanly)
         {
-            // If closed through unexpected mechanism, prompt proctor
             e.Cancel = true;
             ShowExitConfirmation();
             return;
@@ -743,5 +1038,26 @@ public partial class ExamWindow : Window
         {
             // best effort
         }
+
+        // Dispose WebView2 to terminate browser engine threads and child renderers
+        try
+        {
+            webView.Stop();
+            webView.Dispose();
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "WebView2 disposal error");
+        }
+
+        // Terminate any leftover ExamBro.Config sibling processes
+        ProcessMonitorService.TerminateSiblingExamBroProcesses();
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        base.OnClosed(e);
+        ProcessMonitorService.TerminateSiblingExamBroProcesses();
+        Application.Current?.Shutdown(0);
     }
 }
