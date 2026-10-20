@@ -29,6 +29,15 @@ public class RecoveryState
     /// <summary>True if we killed explorer.exe and need to restart it.</summary>
     public bool ExplorerWasKilled { get; set; }
 
+    /// <summary>Original WEKF PredefinedKey Ctrl+Alt+Del enabled status.</summary>
+    public bool? OriginalWekfCtrlAltDelEnabled { get; set; }
+
+    /// <summary>Original WEKF Setting DisableKeyboardFilterForAdministrators value.</summary>
+    public string? OriginalWekfDisableForAdminValue { get; set; }
+
+    /// <summary>Original WEKF Setting ForceOffAccessibility value.</summary>
+    public string? OriginalWekfForceOffAccessibilityValue { get; set; }
+
     /// <summary>UTC timestamp when this state was written.</summary>
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
 

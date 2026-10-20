@@ -158,13 +158,18 @@
 
                     <!-- Right Status & Exit Controls -->
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                        <!-- Network Status Indicator -->
+                        <!-- Ping Time Status Indicator (Status Dot + Value in ms) -->
                         <Border Background="#0F172A" CornerRadius="4" Padding="8,4" Margin="0,0,8,0">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="📶 " Foreground="#38BDF8" FontSize="11" VerticalAlignment="Center"/>
-                                <TextBlock Text="{Binding NetworkStatus}"
-                                           Foreground="#94A3B8"
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Border Width="8" Height="8" CornerRadius="4"
+                                        Background="{Binding PingStatusBrush}"
+                                        Margin="0,0,6,0"
+                                        VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding PingTimeDisplay}"
+                                           Foreground="#CBD5E1"
                                            FontSize="12"
+                                           FontFamily="Consolas, Segoe UI"
+                                           FontWeight="Medium"
                                            VerticalAlignment="Center"/>
                             </StackPanel>
                         </Border>

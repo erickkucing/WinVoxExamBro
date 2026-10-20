@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ExamBro.Core;
 using ExamBro.Core.Models;
+using ExamBro.Core.Network;
 using ExamBro.Exam.Helpers;
 
 namespace ExamBro.Exam.ViewModels;
@@ -17,7 +18,7 @@ namespace ExamBro.Exam.ViewModels;
 public partial class ExamViewModel : ObservableObject, IDisposable
 {
     private readonly DispatcherTimer _clockTimer;
-    private readonly DispatcherTimer _networkTimer;
+    private readonly NetworkPingService _pingService;
     private bool _disposed;
 
     [ObservableProperty]
@@ -38,8 +39,19 @@ public partial class ExamViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private string _clockTime = string.Empty;
 
+    public NetworkPingService PingService => _pingService;
+
     [ObservableProperty]
-    private string _networkStatus = "Terhubung";
+    private string _pingTimeDisplay = "--- ms";
+
+    [ObservableProperty]
+    private Brush _pingStatusBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(PingStatus.ColorDisconnectedHex));
+
+    [ObservableProperty]
+    private PingStatus _currentPingStatus = PingStatus.Disconnected();
+
+    [ObservableProperty]
+    private string _networkStatus = "--- ms";
 
     [ObservableProperty]
     private bool _isNetworkConnected = true;
@@ -93,14 +105,11 @@ public partial class ExamViewModel : ObservableObject, IDisposable
         UpdateClock();
         _clockTimer.Start();
 
-        // Setup Network Monitor Timer (5-second tick)
-        _networkTimer = new DispatcherTimer(DispatcherPriority.Background)
-        {
-            Interval = TimeSpan.FromSeconds(5)
-        };
-        _networkTimer.Tick += (s, e) => CheckNetworkConnectivity();
-        CheckNetworkConnectivity();
-        _networkTimer.Start();
+        // Setup Real-time Network Ping Monitor to CBT Target Server
+        _pingService = new NetworkPingService();
+        _pingService.UpdateTargetFromUrl(config.General.StartUrl);
+        _pingService.PingUpdated += OnPingUpdated;
+        _pingService.Start();
     }
 
     private void UpdateClock()
@@ -108,25 +117,35 @@ public partial class ExamViewModel : ObservableObject, IDisposable
         ClockTime = DateTime.Now.ToString("HH:mm:ss");
     }
 
-    private void CheckNetworkConnectivity()
+    private void OnPingUpdated(PingStatus status)
     {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher != null && !dispatcher.CheckAccess())
+        {
+            dispatcher.InvokeAsync(() => ApplyPingStatus(status));
+        }
+        else
+        {
+            ApplyPingStatus(status);
+        }
+    }
+
+    private void ApplyPingStatus(PingStatus status)
+    {
+        CurrentPingStatus = status;
+        PingTimeDisplay = status.DisplayTime;
+        IsNetworkConnected = status.IsConnected;
+        NetworkStatus = status.DisplayTime;
+
         try
         {
-            if (!string.IsNullOrEmpty(CurrentDomain) && (CurrentDomain.Equals("localhost", StringComparison.OrdinalIgnoreCase) || CurrentDomain.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)))
-            {
-                IsNetworkConnected = true;
-                NetworkStatus = "Server Lokal";
-                return;
-            }
-
-            bool isUp = NetworkInterface.GetIsNetworkAvailable();
-            IsNetworkConnected = isUp;
-            NetworkStatus = isUp ? "Terhubung" : "Offline";
+            var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(status.StatusColorHex));
+            brush.Freeze();
+            PingStatusBrush = brush;
         }
         catch
         {
-            NetworkStatus = "Offline";
-            IsNetworkConnected = true;
+            // fallback
         }
     }
 
@@ -138,6 +157,7 @@ public partial class ExamViewModel : ObservableObject, IDisposable
             if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
             {
                 CurrentDomain = uri.Host;
+                _pingService.UpdateTargetFromUrl(url);
             }
             else
             {
@@ -233,7 +253,7 @@ public partial class ExamViewModel : ObservableObject, IDisposable
         if (!_disposed)
         {
             _clockTimer.Stop();
-            _networkTimer.Stop();
+            _pingService.Dispose();
             _disposed = true;
         }
     }

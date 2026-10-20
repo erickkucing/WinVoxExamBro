@@ -318,7 +318,7 @@ Jalankan `ExamBro-Setup-v1.0.0.exe` dengan hak Administrator. Installer akan:
 | **Penyimpanan Konfigurasi** | AES-256-GCM + DPAPI (Installed) & Portable Master Key (Portable) | Memastikan file konfigurasi tidak dapat dibaca atau dimodifikasi oleh peserta ujian. Tag autentikasi GCM mendeteksi modifikasi 1-bit sekalipun. Pada mode portable, berkas `exambro.cfg` mandiri dapat dicopy ke komputer lain tanpa terikat SID DPAPI mesin pembuat. |
 | **Hak Akses Klien Ujian** | Klien `ExamBro.Exam.exe` WAJIB berjalan dengan hak Administrator penuh (`requireAdministrator`) | Memberikan perizinan penuh dari OS untuk mengunci desktop, membunuh proses terlarang dengan integritas tinggi (CheatEngine, Task Manager, keylogger), mencegah bypass UIPI, dan mencegah penutupan paksa dari pihak luar. |
 | **Kombinasi Keluar** | Wajib menggunakan `Ctrl + C + B` + Kata Sandi Pengawas | Kombinasi tombol chorded 3 jari yang tidak sengaja tertekan siswa dan terlindungi oleh dialog verifikasi password PBKDF2. |
-| **Ctrl+Alt+Del** | Tidak dapat diblokir via keyboard hook Win32; dicegah melalui HKCU Registry Policies | Arsitektur keamanan kernel Windows melindungi urutan SAS (Secure Attention Sequence). Oleh karena itu, Task Manager, Change Password, Lock, dan Logoff dinonaktifkan di registry selama sesi ujian. |
+| **Ctrl+Alt+Del** | Diblokir total di tingkat kernel (WEKF) dan sistem pencegah SAS aktif | Pada edisi yang mendukung Keyboard Filter (WEKF), kombinasi di-drop langsung di kernel driver hardware sehingga tidak memunculkan menu. Pada edisi lainnya, guardian aktif mendeteksi peralihan desktop ke Winlogon dan mengeksekusi auto-dismiss instan, sementara kebijakan registri (Task Manager, Lock, Logoff, Change Password) tetap terkunci penuh. |
 | **Start URL Override** | Argumen command line `--url=` diabaikan secara default | Mencegah peserta meluncurkan ujian ke server phising/palsu melalui manipulasi shortcut. Hanya diizinkan jika `AllowCommandLineOverride=true` diatur oleh admin. |
 | **Blacklist vs Whitelist URL** | Blacklist selalu menang atas Whitelist | Jika suatu pola URL cocok dengan whitelist tetapi juga cocok dengan blacklist, URL tersebut tetap diblokir. |
 | **Skema Protokol Berbahaya** | Skema `file:`, `javascript:`, `view-source:`, `edge:`, `chrome:`, `data:`, `ftp:` diblokir mutlak | Mencegah akses ke file sistem lokal, eksekusi skrip injeksi, atau membuka halaman konfigurasi peramban internal. |
@@ -363,7 +363,7 @@ Gunakan daftar centang berikut untuk memvalidasi kesiapan sistem sebelum ujian b
 - [ ] Tekan **Ctrl + N**, **Ctrl + T**, **Ctrl + W**: Tidak membuka tab atau jendela peramban baru.
 
 ### 3. Uji Coba Keamanan Sistem & Registry
-- [ ] Tekan **Ctrl + Alt + Del**: Opsi *Task Manager*, *Lock*, dan *Change a password* berstatus abu-abu (disabled) atau tidak berfungsi.
+- [ ] Tekan **Ctrl + Alt + Del**: Kombinasi tombol sama sekali tidak merespon apa pun (tidak muncul layar biru/Cancel, langsung diblokir atau di-dismiss seketika dan jendela ujian tetap aktif di depan).
 - [ ] Jalankan perintah `taskmgr` dari shortcut (jika ada): Muncul pesan bahwa Task Manager telah dinonaktifkan oleh Administrator.
 
 ### 4. Uji Coba Kontrol Navigasi Browser

@@ -6,6 +6,7 @@ using System.Windows.Interop;
 using Microsoft.Web.WebView2.Core;
 using ExamBro.Core;
 using ExamBro.Core.Models;
+using ExamBro.Core.Network;
 using ExamBro.Core.Validation;
 using ExamBro.Exam.Services;
 using ExamBro.Exam.ViewModels;
@@ -86,11 +87,20 @@ public partial class ExamWindow : Window
         // 1. Resolve and prepare Start URL
         PrepareStartUrl();
 
+        _viewModel.PingService.UpdateTargetFromUrl(_resolvedStartUrl);
+        _viewModel.PingService.PingUpdated += OnPingStatusChanged;
+
         // 2. Initialize Security Services
         InitializeSecurityServices();
 
         // 3. Initialize WebView2 Browser Engine
         await InitializeWebView2Async();
+    }
+
+    private void OnPingStatusChanged(PingStatus status)
+    {
+        bool toleranceActive = _viewModel.PingService.TolerancePolicy.IsToleranceActive();
+        SetWebNetworkTolerance(toleranceActive);
     }
 
     private void PrepareStartUrl()
@@ -331,8 +341,25 @@ public partial class ExamWindow : Window
         string bridgeScript = @"
 (function() {
     window.__louisvox_suppress_blur = false;
+    window.__louisvox_network_unstable = false;
     window.__exambro_overlay_active = false;
     window.__cbt_lightbox_active = false;
+    window.__cbt_last_unstable_time = 0;
+
+    // Pantau event status koneksi browser untuk toleransi tinggi
+    window.addEventListener('offline', function() {
+        window.__louisvox_network_unstable = true;
+        window.__louisvox_suppress_blur = true;
+        window.__cbt_last_unstable_time = Date.now();
+    });
+    window.addEventListener('online', function() {
+        window.__cbt_last_unstable_time = Date.now();
+        setTimeout(function() {
+            if (typeof navigator !== 'undefined' && navigator.onLine && !window.__louisvox_network_unstable) {
+                window.__louisvox_suppress_blur = false;
+            }
+        }, 15000);
+    });
 
     try {
         const origGetAttr = Element.prototype.getAttribute;
@@ -388,6 +415,70 @@ public partial class ExamWindow : Window
     }
     setInterval(dismissFullscreenGate, 500);
 
+    // Intercept fetch untuk toleransi jaringan putus sementara dan auto-retry penyimpanan jawaban
+    try {
+        const origFetch = window.fetch;
+        window.fetch = async function(input, init) {
+            const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+
+            // 1. Intercept pelaporan pelanggaran saat jaringan tidak stabil / putus sementara
+            if (url.includes('/violation')) {
+                const now = Date.now();
+                const isUnstable = (typeof navigator !== 'undefined' && !navigator.onLine) ||
+                                   window.__louisvox_suppress_blur === true ||
+                                   window.__louisvox_network_unstable === true ||
+                                   (now - (window.__cbt_last_unstable_time || 0) < 15000);
+
+                if (isUnstable) {
+                    let isSensitive = true;
+                    try {
+                        if (init && init.body) {
+                            const parsed = JSON.parse(init.body);
+                            const vt = parsed.violation_type;
+                            if (vt === 'severe_unpin' || parsed.metadata?.is_unpin) {
+                                isSensitive = false;
+                            }
+                        }
+                    } catch(e) {}
+
+                    if (isSensitive) {
+                        return new Response(JSON.stringify({
+                            action: 'ignored',
+                            message: 'Toleransi jaringan tidak stabil / putus sementara aktif.',
+                            is_locked: false
+                        }), {
+                            status: 200,
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                    }
+                }
+            }
+
+            // 2. Proteksi penyimpanan jawaban: auto-retry jika gagal karena gangguan koneksi
+            if (url.includes('/answer')) {
+                try {
+                    return await origFetch.apply(this, arguments);
+                } catch (err) {
+                    window.__louisvox_network_unstable = true;
+                    window.__cbt_last_unstable_time = Date.now();
+                    const retryArgs = arguments;
+                    setTimeout(async () => {
+                        for (let attempt = 0; attempt < 5; attempt++) {
+                            try {
+                                await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+                                await origFetch.apply(window, retryArgs);
+                                break;
+                            } catch(re) {}
+                        }
+                    }, 1000);
+                    throw err;
+                }
+            }
+
+            return origFetch.apply(this, arguments);
+        };
+    } catch(e) {}
+
     window.LouisVoxExamApp = {
         onWebExamConfig: function(maxStrikes, strikes, isLocked) {
             try {
@@ -412,7 +503,14 @@ public partial class ExamWindow : Window
             } catch (e) {}
         },
         isAlarmOverlayActive: function() {
-            return window.__exambro_overlay_active === true || window.__louisvox_suppress_blur === true;
+            const now = Date.now();
+            const isRecentUnstable = (now - (window.__cbt_last_unstable_time || 0)) < 15000;
+            const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+            return window.__exambro_overlay_active === true ||
+                   window.__louisvox_suppress_blur === true ||
+                   window.__louisvox_network_unstable === true ||
+                   isRecentUnstable ||
+                   isOffline;
         },
         setLightboxActive: function(active) {
             window.__cbt_lightbox_active = !!active;
@@ -436,7 +534,7 @@ public partial class ExamWindow : Window
 })();
 ";
         await webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(bridgeScript);
-        Log.Information("Injected LouisVoxExamApp JavaScript bridge for projectCBT.");
+        Log.Information("Injected LouisVoxExamApp JavaScript bridge for projectCBT with high network tolerance.");
     }
 
     private async Task ApplyAudioSettingsAsync()
@@ -778,6 +876,21 @@ public partial class ExamWindow : Window
         }
     }
 
+    private void SetWebNetworkTolerance(bool active)
+    {
+        try
+        {
+            string js = active
+                ? "window.__louisvox_network_unstable = true; window.__louisvox_suppress_blur = true; window.__cbt_last_unstable_time = Date.now();"
+                : "window.__louisvox_network_unstable = false;";
+            _ = webView.CoreWebView2?.ExecuteScriptAsync(js);
+        }
+        catch
+        {
+            // best effort
+        }
+    }
+
     private void NotifyWebAntiCheatViolation(string type, string reason)
     {
         try
@@ -818,6 +931,17 @@ public partial class ExamWindow : Window
             && e.WebErrorStatus != CoreWebView2WebErrorStatus.CertificateIsInvalid)
         {
             Log.Warning("Navigation completed with failure status: {Status}", e.WebErrorStatus);
+
+            // Toleransi tinggi: Jika siswa berada dalam lembar ujian (/exam/workspace),
+            // jangan hapus DOM lembar soal dengan ErrorPage saat koneksi bermasalah sementara!
+            string currentUrl = webView.Source?.ToString() ?? _lastValidUrl;
+            if (_viewModel.PingService.TolerancePolicy.ShouldPreventErrorPageNavigation(currentUrl))
+            {
+                Log.Warning("Suppressing ErrorPage navigation during transient network drop/instability to protect exam workspace.");
+                SetWebNetworkTolerance(true);
+                return;
+            }
+
             ShowErrorPage();
         }
     }
@@ -1046,6 +1170,7 @@ public partial class ExamWindow : Window
         try { _clipboardService?.Dispose(); } catch (Exception ex) { Log.Error(ex, "ClipboardService disposal error"); }
         try { _screenProtection?.Dispose(); } catch (Exception ex) { Log.Error(ex, "ScreenProtection disposal error"); }
         try { _kioskLock?.Dispose(); } catch (Exception ex) { Log.Error(ex, "KioskLock disposal error"); }
+        try { _viewModel.PingService.PingUpdated -= OnPingStatusChanged; } catch { }
         try { _viewModel.Dispose(); } catch (Exception ex) { Log.Error(ex, "ViewModel disposal error"); }
 
         // Clear browsing data on exit

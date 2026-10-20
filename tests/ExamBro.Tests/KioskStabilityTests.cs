@@ -174,4 +174,52 @@ public class KioskStabilityTests
         Assert.NotNull(decrypted);
         Assert.Equal("Ctrl+Shift+E", decrypted.Admin.ExitShortcut);
     }
+
+    [Fact]
+    public void RecoveryState_WekfProperties_RoundtripSerialization()
+    {
+        string tempFile = Path.Combine(Path.GetTempPath(), $"exambro_recovery_test_{Guid.NewGuid():N}.json");
+        try
+        {
+            var state = new ExamBro.Core.Recovery.RecoveryState
+            {
+                OriginalWekfCtrlAltDelEnabled = false,
+                OriginalWekfDisableForAdminValue = "true",
+                OriginalWekfForceOffAccessibilityValue = "false",
+                TaskbarWasVisible = true,
+                ExplorerWasKilled = false
+            };
+            state.OriginalRegistryValues[@"HKLM\Software\Policies\System\DisableTaskMgr"] = 0;
+
+            state.Save(tempFile);
+            Assert.True(ExamBro.Core.Recovery.RecoveryState.NeedsRecovery(tempFile));
+
+            var loaded = ExamBro.Core.Recovery.RecoveryState.Load(tempFile);
+            Assert.NotNull(loaded);
+            Assert.False(loaded.OriginalWekfCtrlAltDelEnabled);
+            Assert.Equal("true", loaded.OriginalWekfDisableForAdminValue);
+            Assert.Equal("false", loaded.OriginalWekfForceOffAccessibilityValue);
+            Assert.True(loaded.TaskbarWasVisible);
+            Assert.Single(loaded.OriginalRegistryValues);
+
+            ExamBro.Core.Recovery.RecoveryState.ClearRecoveryFile(tempFile);
+            Assert.False(ExamBro.Core.Recovery.RecoveryState.NeedsRecovery(tempFile));
+        }
+        finally
+        {
+            if (File.Exists(tempFile))
+            {
+                File.Delete(tempFile);
+            }
+        }
+    }
+
+    [Fact]
+    public void RecoveryState_DefaultWekfProperties_AreNull()
+    {
+        var state = new ExamBro.Core.Recovery.RecoveryState();
+        Assert.Null(state.OriginalWekfCtrlAltDelEnabled);
+        Assert.Null(state.OriginalWekfDisableForAdminValue);
+        Assert.Null(state.OriginalWekfForceOffAccessibilityValue);
+    }
 }

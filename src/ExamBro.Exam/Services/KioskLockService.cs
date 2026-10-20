@@ -292,7 +292,7 @@ public class KioskLockService : IDisposable
         }
 
         // Try Windows Keyboard Filter (WEKF) via WMI if available
-        TryConfigureKeyboardFilter(enableFilter: true);
+        ConfigureKeyboardFilter(enableFilter: true);
     }
 
     private void SetPolicyAndSaveOriginal(string subKey, string valueName, int newValue, bool useHklm = false)
@@ -318,7 +318,7 @@ public class KioskLockService : IDisposable
     private void RestoreRegistryPolicies()
     {
         // Restore Keyboard Filter if previously configured
-        TryConfigureKeyboardFilter(enableFilter: false);
+        ConfigureKeyboardFilter(enableFilter: false);
 
         foreach (var entry in _recovery.OriginalRegistryValues)
         {
@@ -401,7 +401,173 @@ public class KioskLockService : IDisposable
         }
     }
 
-    private static void TryConfigureKeyboardFilter(bool enableFilter)
+    private static void EnsureKeyboardFilterServiceRunning()
+    {
+        try
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return;
+
+            using var sc = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "sc.exe",
+                    Arguments = "query MsKeyboardFilter",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+            sc.Start();
+            string output = sc.StandardOutput.ReadToEnd();
+            sc.WaitForExit(2000);
+
+            if (output.Contains("FAILED 1060"))
+            {
+                // Service not found. Attempt enabling Windows optional feature Client-KeyboardFilter
+                Log.Information("MsKeyboardFilter service not found. Attempting to enable Client-KeyboardFilter feature via DISM...");
+                using var dism = Process.Start(new ProcessStartInfo
+                {
+                    FileName = "dism.exe",
+                    Arguments = "/online /Enable-Feature /FeatureName:Client-KeyboardFilter /NoRestart",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                });
+                dism?.WaitForExit(10000);
+            }
+
+            using var scConfig = Process.Start(new ProcessStartInfo
+            {
+                FileName = "sc.exe",
+                Arguments = "config MsKeyboardFilter start= auto",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+            scConfig?.WaitForExit(2000);
+
+            using var scStart = Process.Start(new ProcessStartInfo
+            {
+                FileName = "sc.exe",
+                Arguments = "start MsKeyboardFilter",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+            scStart?.WaitForExit(3000);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to ensure MsKeyboardFilter service is running.");
+        }
+    }
+
+    private void ConfigureKeyboardFilter(bool enableFilter)
+    {
+        try
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return;
+
+            if (enableFilter)
+            {
+                EnsureKeyboardFilterServiceRunning();
+            }
+
+            var scope = new ManagementScope(@"\\.\root\standardcimv2\embedded");
+            scope.Connect();
+
+            // 1. Configure WEKF_Settings: DisableKeyboardFilterForAdministrators must be "false"
+            // By default, Windows ignores keyboard filters for administrator accounts.
+            // Setting this to "false" ensures Ctrl+Alt+Del is blocked even for elevated administrator sessions.
+            var querySettings = new ObjectQuery("SELECT * FROM WEKF_Settings WHERE Name='DisableKeyboardFilterForAdministrators'");
+            using (var searcherSettings = new ManagementObjectSearcher(scope, querySettings))
+            {
+                foreach (ManagementObject obj in searcherSettings.Get())
+                {
+                    if (enableFilter)
+                    {
+                        string currentVal = obj["Value"]?.ToString() ?? "true";
+                        _recovery.OriginalWekfDisableForAdminValue ??= currentVal;
+                        obj["Value"] = "false";
+                        obj.Put();
+                        Log.Information("WEKF Setting DisableKeyboardFilterForAdministrators set to false (was {OldVal})", currentVal);
+                    }
+                    else if (_recovery.OriginalWekfDisableForAdminValue != null)
+                    {
+                        obj["Value"] = _recovery.OriginalWekfDisableForAdminValue;
+                        obj.Put();
+                        Log.Information("WEKF Setting DisableKeyboardFilterForAdministrators restored to {Value}", _recovery.OriginalWekfDisableForAdminValue);
+                    }
+                }
+            }
+
+            // 2. Configure WEKF_Settings: ForceOffAccessibility to prevent accessibility escapes
+            var queryAccessibility = new ObjectQuery("SELECT * FROM WEKF_Settings WHERE Name='ForceOffAccessibility'");
+            using (var searcherAccessibility = new ManagementObjectSearcher(scope, queryAccessibility))
+            {
+                foreach (ManagementObject obj in searcherAccessibility.Get())
+                {
+                    if (enableFilter)
+                    {
+                        string currentVal = obj["Value"]?.ToString() ?? "false";
+                        _recovery.OriginalWekfForceOffAccessibilityValue ??= currentVal;
+                        obj["Value"] = "true";
+                        obj.Put();
+                        Log.Information("WEKF Setting ForceOffAccessibility set to true (was {OldVal})", currentVal);
+                    }
+                    else if (_recovery.OriginalWekfForceOffAccessibilityValue != null)
+                    {
+                        obj["Value"] = _recovery.OriginalWekfForceOffAccessibilityValue;
+                        obj.Put();
+                        Log.Information("WEKF Setting ForceOffAccessibility restored to {Value}", _recovery.OriginalWekfForceOffAccessibilityValue);
+                    }
+                }
+            }
+
+            // 3. Configure WEKF_PredefinedKey: Ctrl+Alt+Del
+            var queryKeys = new ObjectQuery("SELECT * FROM WEKF_PredefinedKey WHERE Id='Ctrl+Alt+Del' OR Id='Ctrl+Alt+Delete'");
+            using (var searcherKeys = new ManagementObjectSearcher(scope, queryKeys))
+            {
+                foreach (ManagementObject obj in searcherKeys.Get())
+                {
+                    if (enableFilter)
+                    {
+                        bool currentEnabled = Convert.ToBoolean(obj["Enabled"]);
+                        _recovery.OriginalWekfCtrlAltDelEnabled ??= currentEnabled;
+                        obj["Enabled"] = true;
+                        obj.Put();
+                        Log.Information("WEKF PredefinedKey {Id} set to True (was {OldVal})", obj["Id"], currentEnabled);
+                    }
+                    else
+                    {
+                        bool restoreVal = _recovery.OriginalWekfCtrlAltDelEnabled ?? false;
+                        obj["Enabled"] = restoreVal;
+                        obj.Put();
+                        Log.Information("WEKF PredefinedKey {Id} restored to {Value}", obj["Id"], restoreVal);
+                    }
+                }
+            }
+
+            // Fallback: Also try invoking static method Enable / Disable on WEKF_PredefinedKey
+            try
+            {
+                using var wekfClass = new ManagementClass(scope, new ManagementPath("WEKF_PredefinedKey"), null);
+                string methodName = enableFilter ? "Enable" : "Disable";
+                wekfClass.InvokeMethod(methodName, new object[] { "Ctrl+Alt+Del" });
+                Log.Information("Invoked WEKF_PredefinedKey.{MethodName}(\"Ctrl+Alt+Del\") successfully", methodName);
+            }
+            catch (Exception ex)
+            {
+                Log.Debug(ex, "WEKF_PredefinedKey static method invocation skipped or unsupported.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "WEKF (Keyboard Filter) unavailable or not installed on this system.");
+        }
+    }
+
+    private static void RestoreKeyboardFilterStatic(RecoveryState? state, ILogger log)
     {
         try
         {
@@ -411,18 +577,48 @@ public class KioskLockService : IDisposable
             var scope = new ManagementScope(@"\\.\root\standardcimv2\embedded");
             scope.Connect();
 
-            var query = new ObjectQuery("SELECT * FROM WEKF_PredefinedKey WHERE Id='Ctrl+Alt+Del' OR Id='Ctrl+Alt+Delete'");
-            using var searcher = new ManagementObjectSearcher(scope, query);
-            foreach (ManagementObject obj in searcher.Get())
+            if (!string.IsNullOrEmpty(state?.OriginalWekfDisableForAdminValue))
             {
-                obj["Enabled"] = enableFilter;
-                obj.Put();
-                Log.Information("WEKF PredefinedKey Ctrl+Alt+Del set to {Enabled}", enableFilter);
+                var querySettings = new ObjectQuery("SELECT * FROM WEKF_Settings WHERE Name='DisableKeyboardFilterForAdministrators'");
+                using var searcherSettings = new ManagementObjectSearcher(scope, querySettings);
+                foreach (ManagementObject obj in searcherSettings.Get())
+                {
+                    obj["Value"] = state.OriginalWekfDisableForAdminValue;
+                    obj.Put();
+                }
             }
+
+            if (!string.IsNullOrEmpty(state?.OriginalWekfForceOffAccessibilityValue))
+            {
+                var queryAccessibility = new ObjectQuery("SELECT * FROM WEKF_Settings WHERE Name='ForceOffAccessibility'");
+                using var searcherAccessibility = new ManagementObjectSearcher(scope, queryAccessibility);
+                foreach (ManagementObject obj in searcherAccessibility.Get())
+                {
+                    obj["Value"] = state.OriginalWekfForceOffAccessibilityValue;
+                    obj.Put();
+                }
+            }
+
+            var queryKeys = new ObjectQuery("SELECT * FROM WEKF_PredefinedKey WHERE Id='Ctrl+Alt+Del' OR Id='Ctrl+Alt+Delete'");
+            using var searcherKeys = new ManagementObjectSearcher(scope, queryKeys);
+            foreach (ManagementObject obj in searcherKeys.Get())
+            {
+                obj["Enabled"] = state?.OriginalWekfCtrlAltDelEnabled ?? false;
+                obj.Put();
+            }
+
+            try
+            {
+                using var wekfClass = new ManagementClass(scope, new ManagementPath("WEKF_PredefinedKey"), null);
+                wekfClass.InvokeMethod("Disable", new object[] { "Ctrl+Alt+Del" });
+            }
+            catch { }
+
+            log.Information("Recovery: WEKF settings successfully restored");
         }
         catch (Exception ex)
         {
-            Log.Debug(ex, "WEKF (Keyboard Filter) unavailable or not installed on this system.");
+            log.Debug(ex, "Recovery: WEKF unavailable during cleanup.");
         }
     }
 
@@ -634,7 +830,10 @@ public class KioskLockService : IDisposable
                 RestartExplorer();
             }
 
-            // 5. Clear recovery file
+            // 5. Restore Keyboard Filter (WEKF)
+            RestoreKeyboardFilterStatic(state, log);
+
+            // 6. Clear recovery file
             RecoveryState.ClearRecoveryFile();
             log.Information("System state successfully restored");
         }
