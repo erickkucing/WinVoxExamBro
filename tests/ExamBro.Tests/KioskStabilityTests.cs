@@ -222,4 +222,40 @@ public class KioskStabilityTests
         Assert.Null(state.OriginalWekfDisableForAdminValue);
         Assert.Null(state.OriginalWekfForceOffAccessibilityValue);
     }
+
+    [Fact]
+    public void ProcessBlacklist_ContainsDisplaySwitch()
+    {
+        var config = ExamConfig.CreateDefault();
+        var blacklist = config.Security.ProcessBlacklist;
+
+        Assert.Contains("DisplaySwitch", blacklist, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ProcessBlacklist_ContainsScreenCaptureAndProjectionTools()
+    {
+        var config = ExamConfig.CreateDefault();
+        var blacklist = config.Security.ProcessBlacklist;
+
+        Assert.Contains("DisplaySwitch", blacklist, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("snippingtool", blacklist, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("ScreenClippingHost", blacklist, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("http://192.168.70.9/exam/test", false)]
+    [InlineData("http://192.168.70.9/exam/question/1", false)]
+    [InlineData("http://192.168.70.9/exam/submit", false)]
+    [InlineData("http://192.168.70.9/exam/finished/123", true)]
+    [InlineData("http://192.168.70.9/selesai", true)]
+    [InlineData("https://cbt.sch.id/selesai?token=abc", true)]
+    [InlineData("http://192.168.1.100:8080/exam/finished/session-xyz", true)]
+    [InlineData("http://192.168.70.9/exam/dashboard", false)]
+    public void MatchesExitUrl_DistinguishesActiveExamFromFinished(string url, bool expectedExit)
+    {
+        var config = ExamConfig.CreateDefault();
+        bool matches = UrlMatcher.MatchesExitUrl(url, config.Navigation.ExitUrlPattern);
+        Assert.Equal(expectedExit, matches);
+    }
 }

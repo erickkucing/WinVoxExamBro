@@ -92,7 +92,8 @@ public class SecurityConfig
         "TeamViewer", "AnyDesk", "rustdesk",
         "Discord", "Zoom", "Teams", "Skype",
         "AutoHotkey", "CheatEngine", "wireshark", "Sandboxie",
-        "chrome", "firefox", "msedge"
+        "chrome", "firefox", "msedge",
+        "DisplaySwitch"
     };
 
     public ProcessActionType ProcessAction { get; set; } = ProcessActionType.Kill;

@@ -71,7 +71,7 @@ public partial class ExamWindow : Window
         warningOverlay.Dismissed += () => SetWebOverlayActive(false);
         lockScreen.Initialize(_config);
         lockScreen.Unlocked += OnLockScreenUnlocked;
-        completionOverlay.ExitRequested += CloseGracefully;
+        completionOverlay.ExitRequested += ShowExitConfirmation;
 
         Loaded += OnWindowLoaded;
         Closing += OnWindowClosing;
@@ -83,6 +83,10 @@ public partial class ExamWindow : Window
         _hwnd = helper.Handle;
 
         Log.Information("ExamWindow loaded. HWND: 0x{Hwnd:X}, DevSafe: {DevSafe}", _hwnd.ToInt64(), _isDevSafe);
+
+        // Multi-layer defense: Win32 message hook for blocking F10, SC_KEYMENU, and app commands
+        var source = HwndSource.FromHwnd(_hwnd);
+        source?.AddHook(WndProc);
 
         // 1. Resolve and prepare Start URL
         PrepareStartUrl();
@@ -184,8 +188,11 @@ public partial class ExamWindow : Window
             _keyboardHook = new KeyboardHookService(_config);
             _keyboardHook.BlockedKeyDetected += desc =>
             {
-                _violationManager.RecordViolation(ViolationEventType.BlockedKey, desc);
-                NotifyWebAntiCheatViolation("window_blur", $"Kombinasi tombol terlarang: {desc}");
+                Dispatcher.BeginInvoke(() =>
+                {
+                    _violationManager.RecordViolation(ViolationEventType.BlockedKey, desc);
+                    NotifyWebAntiCheatViolation("window_blur", $"Kombinasi tombol terlarang: {desc}");
+                });
             };
             _keyboardHook.ExitShortcutRequested += () =>
             {
@@ -207,6 +214,7 @@ public partial class ExamWindow : Window
             {
                 // Reclaim focus silently without penalizing the student or recording a violation
                 Log.Information("Focus lost to foreign window, reclaiming focus silently without penalty.");
+                _keyboardHook?.RefreshHook();
             };
             _focusGuard.Start(_hwnd);
         }
@@ -360,6 +368,22 @@ public partial class ExamWindow : Window
             }
         }, 15000);
     });
+
+    // Multi-layer DOM capture to suppress F10 and function keys inside the web environment
+    window.addEventListener('keydown', function(e) {
+        if (e.key === 'F10' || e.keyCode === 121 || (e.keyCode >= 112 && e.keyCode <= 135)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+        }
+    }, true);
+    window.addEventListener('keyup', function(e) {
+        if (e.key === 'F10' || e.keyCode === 121 || (e.keyCode >= 112 && e.keyCode <= 135)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+        }
+    }, true);
 
     try {
         const origGetAttr = Element.prototype.getAttribute;
@@ -531,6 +555,16 @@ public partial class ExamWindow : Window
             } catch (e) {}
         }
     };
+
+    try {
+        window.close = function() {
+            try {
+                window.chrome.webview.postMessage(JSON.stringify({
+                    handler: 'CBT_FINISHED'
+                }));
+            } catch (e) {}
+        };
+    } catch (e) {}
 })();
 ";
         await webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(bridgeScript);
@@ -649,7 +683,17 @@ public partial class ExamWindow : Window
         core.ProcessFailed += OnProcessFailed;
         core.WebMessageReceived += OnWebMessageReceived;
         core.NavigationCompleted += OnNavigationCompleted;
+        core.WindowCloseRequested += OnWindowCloseRequested;
         webView.ZoomFactorChanged += OnWebViewZoomFactorChanged;
+    }
+
+    private void OnWindowCloseRequested(object? sender, object e)
+    {
+        Log.Information("CoreWebView2.WindowCloseRequested intercepted; preventing automatic window closure on submit.");
+        Dispatcher.Invoke(() =>
+        {
+            completionOverlay.ShowCompletion(_config.Navigation.ExitUrlAutoCloseSeconds);
+        });
     }
 
     private void OnContainsFullScreenElementChanged(object? sender, object e)
@@ -969,7 +1013,7 @@ public partial class ExamWindow : Window
 
     private void BtnInitErrorExit_Click(object sender, RoutedEventArgs e)
     {
-        CloseGracefully();
+        ShowExitConfirmation();
     }
 
     private static string GetErrorPageHtml()
@@ -1091,12 +1135,71 @@ public partial class ExamWindow : Window
 
     private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // Multi-layer defense: suppress F10 and all Function keys (F1-F24) in WPF
+        Key realKey = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (realKey == Key.F10 || (realKey >= Key.F1 && realKey <= Key.F24 && realKey != Key.F4 && (!_config.Security.AllowRefresh || realKey != Key.F5)))
+        {
+            e.Handled = true;
+            return;
+        }
+
         // Fallback for dev mode where low-level keyboard hook is not installed
         if (_isDevSafe && (e.Key == Key.Escape || (Keyboard.Modifiers.HasFlag(ModifierKeys.Control) && (e.Key == Key.C || e.Key == Key.B))))
         {
             ShowExitConfirmation();
             e.Handled = true;
         }
+    }
+
+    private void OnWindowPreviewKeyUp(object sender, KeyEventArgs e)
+    {
+        Key realKey = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (realKey == Key.F10 || (realKey >= Key.F1 && realKey <= Key.F24 && realKey != Key.F4 && (!_config.Security.AllowRefresh || realKey != Key.F5)))
+        {
+            e.Handled = true;
+        }
+    }
+
+    private const int WM_SYSCOMMAND = 0x0112;
+    private const int SC_KEYMENU = 0xF100;
+    private const int WM_APPCOMMAND = 0x0319;
+    private const int WM_KEYDOWN_MSG = 0x0100;
+    private const int WM_KEYUP_MSG = 0x0101;
+    private const int WM_SYSKEYDOWN_MSG = 0x0104;
+    private const int WM_SYSKEYUP_MSG = 0x0105;
+
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        // 1. Block SC_KEYMENU (system menu / menu bar activation from F10 or Alt)
+        if (msg == WM_SYSCOMMAND)
+        {
+            int command = wParam.ToInt32() & 0xFFF0;
+            if (command == SC_KEYMENU)
+            {
+                handled = true;
+                return IntPtr.Zero;
+            }
+        }
+
+        // 2. Block F10 and Function keys (F1-F24) directly at window message level
+        if (msg == WM_KEYDOWN_MSG || msg == WM_KEYUP_MSG || msg == WM_SYSKEYDOWN_MSG || msg == WM_SYSKEYUP_MSG)
+        {
+            int vk = wParam.ToInt32();
+            if (vk == 0x79 || (vk >= 0x70 && vk <= 0x87 && vk != 0x73 && (!_config.Security.AllowRefresh || vk != 0x74)))
+            {
+                handled = true;
+                return IntPtr.Zero;
+            }
+        }
+
+        // 3. Block multimedia and app commands (e.g. mic mute, camera toggle, media keys)
+        if (msg == WM_APPCOMMAND)
+        {
+            handled = true;
+            return (IntPtr)1;
+        }
+
+        return IntPtr.Zero;
     }
 
     // Proctor Exit & Lock Screen Handling
@@ -1164,6 +1267,7 @@ public partial class ExamWindow : Window
         Log.Information("Closing ExamWindow and tearing down security services...");
 
         // Defensively teardown all services
+        try { HwndSource.FromHwnd(_hwnd)?.RemoveHook(WndProc); } catch { }
         try { _focusGuard?.Dispose(); } catch (Exception ex) { Log.Error(ex, "FocusGuard disposal error"); }
         try { _keyboardHook?.Dispose(); } catch (Exception ex) { Log.Error(ex, "KeyboardHook disposal error"); }
         try { _processMonitor?.Dispose(); } catch (Exception ex) { Log.Error(ex, "ProcessMonitor disposal error"); }

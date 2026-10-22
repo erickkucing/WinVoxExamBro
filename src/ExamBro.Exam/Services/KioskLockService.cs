@@ -286,10 +286,25 @@ public class KioskLockService : IDisposable
             SetPolicyAndSaveOriginal(Constants.SystemPolicySubKey, "DisableChangePassword", 1, useHklm);
             SetPolicyAndSaveOriginal(Constants.SystemPolicySubKey, "HideFastUserSwitching", 1, useHklm);
 
-            // Explorer policies: NoLogoff (Disable Sign out), NoClose (Disable Shutdown from SAS)
+            // Explorer policies: NoLogoff (Disable Sign out), NoClose (Disable Shutdown from SAS),
+            // DisableNotificationCenter (blocks Quick Settings / Action Center flyout), NoWinKeys (blocks Windows shortcut keys)
             SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "NoLogoff", 1, useHklm);
             SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "NoClose", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "DisableNotificationCenter", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "NoWinKeys", 1, useHklm);
+
+            // Group Policy Explorer policies: DisableNotificationCenter, NoWinKeys
+            SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "DisableNotificationCenter", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "NoWinKeys", 1, useHklm);
         }
+
+        // Multi-layer hook protection: ensure LowLevelHooksTimeout is set to 10000ms (10 seconds)
+        // so Windows never unhooks or times out WH_KEYBOARD_LL during rapid repeated key presses
+        SetPolicyAndSaveOriginal(@"Control Panel\Desktop", "LowLevelHooksTimeout", 10000, useHklm: false);
+
+        // Multi-layer projection disarming: Image File Execution Options (IFEO) debugger for DisplaySwitch.exe
+        // When configured, any attempt by Windows or OEM hotkey drivers to launch DisplaySwitch.exe is redirected to a harmless dummy
+        SetRegistryStringValue(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\DisplaySwitch.exe", "Debugger", "systray.exe", useHklm: true);
 
         // Try Windows Keyboard Filter (WEKF) via WMI if available
         ConfigureKeyboardFilter(enableFilter: true);
@@ -353,6 +368,9 @@ public class KioskLockService : IDisposable
             }
         }
 
+        // Clean up IFEO debugger for DisplaySwitch
+        DeleteRegistrySubKeyTree(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\DisplaySwitch.exe", useHklm: true);
+
         _recovery.OriginalRegistryValues.Clear();
     }
 
@@ -398,6 +416,33 @@ public class KioskLockService : IDisposable
         catch (Exception ex)
         {
             Log.Debug(ex, "Registry delete error for {Root}\\{SubKey}\\{ValueName}", useHklm ? "HKLM" : "HKCU", subKey, valueName);
+        }
+    }
+
+    public static void SetRegistryStringValue(string subKey, string valueName, string value, bool useHklm = false)
+    {
+        try
+        {
+            var baseKey = useHklm ? Registry.LocalMachine : Registry.CurrentUser;
+            using var key = baseKey.CreateSubKey(subKey);
+            key?.SetValue(valueName, value, RegistryValueKind.String);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Registry string write error for {Root}\\{SubKey}\\{ValueName}", useHklm ? "HKLM" : "HKCU", subKey, valueName);
+        }
+    }
+
+    public static void DeleteRegistrySubKeyTree(string subKey, bool useHklm = false)
+    {
+        try
+        {
+            var baseKey = useHklm ? Registry.LocalMachine : Registry.CurrentUser;
+            baseKey.DeleteSubKeyTree(subKey, false);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Registry delete subkey tree error for {Root}\\{SubKey}", useHklm ? "HKLM" : "HKCU", subKey);
         }
     }
 
@@ -770,7 +815,8 @@ public class KioskLockService : IDisposable
                     {
                         string fullPath = entry.Key;
                         int? originalValue = entry.Value;
-                        string pathWithoutRoot = fullPath.StartsWith(@"HKCU\", StringComparison.OrdinalIgnoreCase)
+                        bool isHklm = fullPath.StartsWith(@"HKLM\", StringComparison.OrdinalIgnoreCase);
+                        string pathWithoutRoot = (isHklm || fullPath.StartsWith(@"HKCU\", StringComparison.OrdinalIgnoreCase))
                             ? fullPath[5..]
                             : fullPath;
 
@@ -782,11 +828,11 @@ public class KioskLockService : IDisposable
 
                         if (originalValue.HasValue)
                         {
-                            SetRegistryValue(subKey, valueName, originalValue.Value);
+                            SetRegistryValue(subKey, valueName, originalValue.Value, useHklm: isHklm);
                         }
                         else
                         {
-                            DeleteRegistryValue(subKey, valueName);
+                            DeleteRegistryValue(subKey, valueName, useHklm: isHklm);
                         }
                     }
                     catch (Exception ex)
@@ -797,12 +843,24 @@ public class KioskLockService : IDisposable
             }
             else
             {
-                // Fallback registry cleanup: delete known lockout values
-                DeleteRegistryValue(Constants.SystemPolicySubKey, "DisableTaskMgr");
-                DeleteRegistryValue(Constants.SystemPolicySubKey, "DisableLockWorkstation");
-                DeleteRegistryValue(Constants.SystemPolicySubKey, "DisableChangePassword");
-                DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoLogoff");
+                // Fallback registry cleanup: delete known lockout values from both HKCU and HKLM
+                foreach (bool useHklm in new[] { false, true })
+                {
+                    DeleteRegistryValue(Constants.SystemPolicySubKey, "DisableTaskMgr", useHklm);
+                    DeleteRegistryValue(Constants.SystemPolicySubKey, "DisableLockWorkstation", useHklm);
+                    DeleteRegistryValue(Constants.SystemPolicySubKey, "DisableChangePassword", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoLogoff", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoClose", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "DisableNotificationCenter", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoWinKeys", useHklm);
+                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "DisableNotificationCenter", useHklm);
+                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "NoWinKeys", useHklm);
+                }
+                DeleteRegistryValue(@"Control Panel\Desktop", "LowLevelHooksTimeout", useHklm: false);
             }
+
+            DeleteRegistrySubKeyTree(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\DisplaySwitch.exe", useHklm: true);
+
 
             // 3. Re-enable accessibility hotkeys
             try

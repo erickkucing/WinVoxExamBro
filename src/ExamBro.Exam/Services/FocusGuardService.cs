@@ -163,6 +163,20 @@ public class FocusGuardService : IDisposable
     [DllImport("user32.dll")]
     private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    private static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
     // Constants & Delegates
 
     private const uint GA_PARENT = 1;
@@ -191,6 +205,8 @@ public class FocusGuardService : IDisposable
 
     private const byte VK_ESCAPE = 0x1B;
     private const uint KEYEVENTF_KEYUP = 0x0002;
+    private const uint WM_CLOSE = 0x0010;
+    private const int SW_HIDE = 0;
 
     private const int UOI_NAME = 2;
 
@@ -359,9 +375,100 @@ public class FocusGuardService : IDisposable
                 return;
             }
 
+            if (TryDismissQuickSettingsPanel(hwnd))
+            {
+                return;
+            }
+
             Log.Warning("Foreground change detected! Foreign window handle: 0x{Handle:X}", hwnd.ToInt64());
             FocusLost?.Invoke();
             ReclaimFocus();
+        }
+    }
+
+    /// <summary>
+    /// Detects and dismisses the Windows 11 Quick Settings / Action Center flyout if it takes foreground.
+    /// Returns true if the window was identified as the Quick Settings panel (regardless of dismiss success).
+    /// </summary>
+    private bool TryDismissQuickSettingsPanel(IntPtr hwnd)
+    {
+        try
+        {
+            var className = new System.Text.StringBuilder(256);
+            GetClassName(hwnd, className, className.Capacity);
+            string cls = className.ToString();
+
+            var titleBuf = new System.Text.StringBuilder(256);
+            GetWindowText(hwnd, titleBuf, titleBuf.Capacity);
+            string title = titleBuf.ToString();
+
+            bool isKnownFlyoutClass =
+                cls.Equals("ControlCenterWindow", StringComparison.OrdinalIgnoreCase) ||
+                cls.Equals("Windows.UI.Composition.DesktopWindowTreeHost", StringComparison.OrdinalIgnoreCase) ||
+                cls.Equals("Windows.UI.Core.CoreWindow", StringComparison.OrdinalIgnoreCase) ||
+                cls.Equals("XamlExplorerHostIslandWindow", StringComparison.OrdinalIgnoreCase) ||
+                cls.Equals("Shell_Flyout", StringComparison.OrdinalIgnoreCase) ||
+                cls.Equals("TopLevelWindowForOverflow", StringComparison.OrdinalIgnoreCase);
+
+            bool isFlyoutTitle =
+                title.IndexOf("Action Center", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                title.IndexOf("Quick Settings", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                title.IndexOf("Control Center", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                title.IndexOf("Notification", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                title.IndexOf("Project", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                title.IndexOf("Proyeksikan", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                title.IndexOf("DisplaySwitch", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            bool isShellProcess = false;
+            try
+            {
+                GetWindowThreadProcessId(hwnd, out uint pid);
+                if (pid != 0)
+                {
+                    using var proc = Process.GetProcessById((int)pid);
+                    string pname = proc.ProcessName;
+                    if (pname.Equals("ShellExperienceHost", StringComparison.OrdinalIgnoreCase) ||
+                        pname.Equals("StartMenuExperienceHost", StringComparison.OrdinalIgnoreCase) ||
+                        pname.Equals("SearchHost", StringComparison.OrdinalIgnoreCase) ||
+                        pname.Equals("DisplaySwitch", StringComparison.OrdinalIgnoreCase))
+                    {
+                        isShellProcess = true;
+                    }
+                }
+            }
+            catch { }
+
+            if (!isKnownFlyoutClass && !isFlyoutTitle && !isShellProcess)
+                return false;
+
+            Log.Warning("Quick Settings / Action Center / Shell flyout detected (class={Class}, title={Title}). Dismissing immediately.", cls, title);
+
+            // Hide and close window immediately
+            ShowWindow(hwnd, SW_HIDE);
+            PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+
+            // Kill DisplaySwitch process immediately if spawned
+            try
+            {
+                foreach (var p in Process.GetProcessesByName("DisplaySwitch"))
+                {
+                    try { p.Kill(true); } catch { }
+                    p.Dispose();
+                }
+            }
+            catch { }
+
+            // Inject Escape to dismiss shell flyout state
+            keybd_event(VK_ESCAPE, 0, 0, UIntPtr.Zero);
+            keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+
+            ReclaimFocus();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "TryDismissQuickSettingsPanel encountered error");
+            return false;
         }
     }
 
@@ -371,6 +478,11 @@ public class FocusGuardService : IDisposable
 
         IntPtr currentFore = GetForegroundWindow();
         if (currentFore == IntPtr.Zero || IsOurWindow(currentFore))
+        {
+            return;
+        }
+
+        if (TryDismissQuickSettingsPanel(currentFore))
         {
             return;
         }
@@ -413,6 +525,22 @@ public class FocusGuardService : IDisposable
             finally
             {
                 CloseDesktop(hDesk);
+            }
+        }
+        catch { }
+
+        // Periodically kill any spawned DisplaySwitch instances within 100ms
+        try
+        {
+            var dsProcs = Process.GetProcessesByName("DisplaySwitch");
+            if (dsProcs.Length > 0)
+            {
+                foreach (var p in dsProcs)
+                {
+                    try { p.Kill(true); } catch { }
+                    p.Dispose();
+                }
+                ReclaimFocus();
             }
         }
         catch { }
@@ -582,6 +710,7 @@ public class FocusGuardService : IDisposable
 
     /// <summary>
     /// Forcefully brings the exam window to the foreground if a foreign window steals focus.
+    /// Uses AttachThreadInput to bypass the Windows foreground lock mechanism.
     /// </summary>
     public void ReclaimFocus()
     {
@@ -595,8 +724,21 @@ public class FocusGuardService : IDisposable
                 return;
             }
 
+            uint currentThreadId = GetCurrentThreadId();
+            uint foreThreadId = foreHwnd != IntPtr.Zero
+                ? GetWindowThreadProcessId(foreHwnd, out _)
+                : 0;
+
+            bool attached = foreThreadId != 0 && foreThreadId != currentThreadId &&
+                            AttachThreadInput(currentThreadId, foreThreadId, true);
+
             BringWindowToTop(_targetHwnd);
             SetForegroundWindow(_targetHwnd);
+
+            if (attached)
+            {
+                AttachThreadInput(currentThreadId, foreThreadId, false);
+            }
         }
         catch (Exception ex)
         {

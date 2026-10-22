@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Windows.Threading;
 using ExamBro.Core.Models;
 using Serilog;
 
@@ -34,6 +36,14 @@ public class KeyboardHookService : IDisposable
     private long _chordWindowStartTimestamp;
     private const long ChordWindowMs = 2500;
     private volatile bool _isSuspended;
+
+    // Multi-layer protection state & rate-limiting to prevent hook timeout
+    private long _lastSuppressedTimestamp;
+    private uint _lastSuppressedVk;
+    private long _lastViolationTimestamp;
+    private string _lastViolationReason = string.Empty;
+    private volatile bool _isWinKeyDown;
+    private readonly DispatcherTimer _watchdogTimer;
 
     public void SetSuspended(bool suspended)
     {
@@ -136,10 +146,18 @@ public class KeyboardHookService : IDisposable
     private const int VK_MENU = 0x12; // Alt
 
     private const int VK_F1 = 0x70;
+    private const int VK_F2 = 0x71;
+    private const int VK_F3 = 0x72;
     private const int VK_F4 = 0x73;
     private const int VK_F5 = 0x74;
+    private const int VK_F6 = 0x75;
+    private const int VK_F7 = 0x76;
+    private const int VK_F8 = 0x77;
+    private const int VK_F9 = 0x78;
+    private const int VK_F10 = 0x79;
     private const int VK_F11 = 0x7A;
     private const int VK_F12 = 0x7B;
+    private const int VK_F24 = 0x87;
 
     private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
@@ -153,11 +171,19 @@ public class KeyboardHookService : IDisposable
         public UIntPtr dwExtraInfo;
     }
 
+    private readonly object _hookLock = new();
+
     public KeyboardHookService(ExamConfig config)
     {
         _config = config;
         _hookProc = HookCallback;
         ParseExitShortcut(config.Admin.ExitShortcut);
+
+        _watchdogTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromSeconds(5)
+        };
+        _watchdogTimer.Tick += (s, e) => RefreshHook();
     }
 
     /// <summary>
@@ -165,8 +191,16 @@ public class KeyboardHookService : IDisposable
     /// </summary>
     public void Start()
     {
-        if (_hookId != IntPtr.Zero) return;
+        lock (_hookLock)
+        {
+            if (_hookId != IntPtr.Zero) return;
+            InstallHookInternal();
+            _watchdogTimer.Start();
+        }
+    }
 
+    private void InstallHookInternal()
+    {
         using var curProcess = Process.GetCurrentProcess();
         using var curModule = curProcess.MainModule;
         IntPtr moduleHandle = curModule?.ModuleName != null ? GetModuleHandle(curModule.ModuleName) : IntPtr.Zero;
@@ -180,7 +214,7 @@ public class KeyboardHookService : IDisposable
         }
         else
         {
-            Log.Information("Low-level keyboard hook installed successfully (HookId: {HookId})", _hookId);
+            Log.Debug("Low-level keyboard hook installed successfully (HookId: {HookId})", _hookId);
         }
     }
 
@@ -189,12 +223,41 @@ public class KeyboardHookService : IDisposable
     /// </summary>
     public void Stop()
     {
-        if (_hookId != IntPtr.Zero)
+        _watchdogTimer.Stop();
+
+        lock (_hookLock)
         {
-            UnhookWindowsHookEx(_hookId);
-            _hookId = IntPtr.Zero;
-            Log.Information("Low-level keyboard hook removed");
+            if (_hookId != IntPtr.Zero)
+            {
+                UnhookWindowsHookEx(_hookId);
+                _hookId = IntPtr.Zero;
+                Log.Information("Low-level keyboard hook removed");
+            }
         }
+    }
+
+    /// <summary>
+    /// Healthcheck and heartbeat method ensuring the keyboard hook remains attached under all circumstances.
+    /// Safely unhooks and reinstalls SetWindowsHookEx to ensure the hook sits at the head of the system hook chain.
+    /// </summary>
+    public void RefreshHook()
+    {
+        if (_disposed || _isSuspended) return;
+
+        lock (_hookLock)
+        {
+            if (_hookId != IntPtr.Zero)
+            {
+                UnhookWindowsHookEx(_hookId);
+                _hookId = IntPtr.Zero;
+            }
+            InstallHookInternal();
+        }
+    }
+
+    public void EnsureHookActive()
+    {
+        RefreshHook();
     }
 
     // Hook Callback Procedure
@@ -210,17 +273,24 @@ public class KeyboardHookService : IDisposable
 
             int msg = wParam.ToInt32();
             bool isKeyDown = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
+            bool isKeyUp = msg == WM_KEYUP || msg == WM_SYSKEYUP;
 
-            if (isKeyDown)
+            if (isKeyDown || isKeyUp)
             {
                 var hookStruct = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
                 uint vkCode = hookStruct.vkCode;
+
+                if (vkCode == VK_LWIN || vkCode == VK_RWIN)
+                {
+                    _isWinKeyDown = isKeyDown;
+                }
+
                 bool altDown = (hookStruct.flags & LLKHF_ALTDOWN) != 0 || IsKeyDown(VK_MENU);
                 bool ctrlDown = IsKeyDown(VK_CONTROL);
                 bool shiftDown = IsKeyDown(VK_SHIFT);
 
-                // Check Exit Shortcut (Proctor Exit)
-                if (CheckExitShortcut(vkCode, ctrlDown, shiftDown, altDown))
+                // Check Exit Shortcut (Proctor Exit) - only trigger on KeyDown
+                if (isKeyDown && CheckExitShortcut(vkCode, ctrlDown, shiftDown, altDown))
                 {
                     Log.Information("Exit shortcut triggered by user");
                     ExitShortcutRequested?.Invoke();
@@ -230,21 +300,48 @@ public class KeyboardHookService : IDisposable
                 // Keyboard Policy Evaluation
                 if (ShouldBlockKey(vkCode, altDown, ctrlDown, shiftDown, out string reason, out bool isViolation))
                 {
-                    if (isViolation)
+                    if (isKeyDown)
                     {
-                        Log.Warning("Violation key combination detected: {Reason} (VK: 0x{VkCode:X2})", reason, vkCode);
-                        BlockedKeyDetected?.Invoke(reason);
+                        NotifyBlockedKey(reason, vkCode, isViolation);
                     }
-                    else
-                    {
-                        Log.Information("Suppressed key combination without violation: {Reason} (VK: 0x{VkCode:X2})", reason, vkCode);
-                    }
-                    return (IntPtr)1; // Block key
+                    return (IntPtr)1; // Block BOTH keydown and keyup!
                 }
             }
         }
 
         return CallNextHookEx(_hookId, nCode, wParam, lParam);
+    }
+
+    private void NotifyBlockedKey(string reason, uint vkCode, bool isViolation)
+    {
+        long now = Stopwatch.GetTimestamp();
+        if (isViolation)
+        {
+            long elapsed = (now - _lastViolationTimestamp) * 1000 / Stopwatch.Frequency;
+            if (elapsed > 400 || _lastViolationReason != reason)
+            {
+                _lastViolationTimestamp = now;
+                _lastViolationReason = reason;
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    Log.Warning("Violation key combination detected: {Reason} (VK: 0x{VkCode:X2})", reason, vkCode);
+                    BlockedKeyDetected?.Invoke(reason);
+                });
+            }
+        }
+        else
+        {
+            long elapsed = (now - _lastSuppressedTimestamp) * 1000 / Stopwatch.Frequency;
+            if (elapsed > 1000 || _lastSuppressedVk != vkCode)
+            {
+                _lastSuppressedTimestamp = now;
+                _lastSuppressedVk = vkCode;
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    Log.Information("Suppressed key combination without violation: {Reason} (VK: 0x{VkCode:X2})", reason, vkCode);
+                });
+            }
+        }
     }
 
     private bool ShouldBlockKey(uint vkCode, bool altDown, bool ctrlDown, bool shiftDown, out string reason, out bool isViolation)
@@ -287,10 +384,11 @@ public class KeyboardHookService : IDisposable
             return true;
         }
 
-        // 1. Windows Keys (LWIN, RWIN) - ALWAYS block
-        if (vkCode == VK_LWIN || vkCode == VK_RWIN)
+        // 1. Windows Keys (LWIN, RWIN) and any combination with Windows key held
+        bool winDown = vkCode == VK_LWIN || vkCode == VK_RWIN || IsKeyDown(VK_LWIN) || IsKeyDown(VK_RWIN) || _isWinKeyDown;
+        if (winDown)
         {
-            reason = "Tombol Windows (Start)";
+            reason = "Tombol Windows / Pintasan Windows";
             return true;
         }
 
@@ -305,6 +403,13 @@ public class KeyboardHookService : IDisposable
         if (altDown && vkCode == VK_ESCAPE)
         {
             reason = "Alt + Esc (Window Cycling)";
+            return true;
+        }
+
+        // 3b. Alt + Enter - ALWAYS block (Fullscreen toggle / properties)
+        if (altDown && vkCode == 0x0D) // VK_RETURN
+        {
+            reason = "Alt + Enter (Layar Penuh)";
             return true;
         }
 
@@ -350,10 +455,46 @@ public class KeyboardHookService : IDisposable
             return true;
         }
 
-        // 10. F1 (Help), F11 (Fullscreen Toggle), F12 (DevTools) - ALWAYS block
-        if (vkCode == VK_F1 || vkCode == VK_F11 || vkCode == VK_F12)
+        // 9b. Multimedia / Application Launch Keys (Browser, Mail, Media Player, Calculator, Sleep)
+        if ((vkCode >= 0xA6 && vkCode <= 0xB7) || vkCode == 0x5F)
         {
-            reason = $"Tombol Fungsi F{(vkCode - 0x6F)}";
+            reason = "Tombol Multimedia / Peluncur Sistem";
+            return true;
+        }
+
+        // 9c. Standalone or modified VK_F10 (0x79) - Menu bar activation, OEM display switch, camera toggle: ALWAYS block
+        if (vkCode == (uint)VK_F10)
+        {
+            reason = "Tombol F10 (Menu/Sistem)";
+            return true;
+        }
+
+        // 10. All Function keys: F1 to F24 (covers F13-F24 OEM laptop hotkeys)
+        // F4 is handled by "Alt+F4" above; F5 is handled by AllowRefresh below.
+        if (vkCode >= VK_F1 && vkCode <= VK_F24 && vkCode != (uint)VK_F4 && vkCode != (uint)VK_F5)
+        {
+            reason = $"Tombol Fungsi F{(vkCode - VK_F1 + 1)}";
+            return true;
+        }
+
+        // 10b. Alt + any function key (can open application menus or OEM shortcuts)
+        if (altDown && vkCode >= VK_F1 && vkCode <= VK_F24)
+        {
+            reason = $"Alt + F{(vkCode - VK_F1 + 1)} (Menu Aplikasi)";
+            return true;
+        }
+
+        // 10c. Standalone F4
+        if (vkCode == (uint)VK_F4)
+        {
+            reason = "Tombol Fungsi F4";
+            return true;
+        }
+
+        // 10d. Display Switch / Project (Win+P or Alt+P)
+        if ((winDown || altDown) && vkCode == 0x50) // 'P'
+        {
+            reason = "Pintasan Layar / Proyektor (Project)";
             return true;
         }
 
@@ -362,6 +503,14 @@ public class KeyboardHookService : IDisposable
         {
             char letter = (char)vkCode;
             reason = $"Ctrl + Shift + {letter} (Developer Tools)";
+            return true;
+        }
+
+        // 11b. Ctrl + Shift + (N, T, W, P, Q) - ALWAYS block (Incognito, Reopen Tab, Close All Tabs, Private, Quit)
+        if (ctrlDown && shiftDown && (vkCode == 0x4E || vkCode == 0x54 || vkCode == 0x57 || vkCode == 0x50 || vkCode == 0x51))
+        {
+            char letter = (char)vkCode;
+            reason = $"Ctrl + Shift + {letter} (Pintasan Peramban)";
             return true;
         }
 

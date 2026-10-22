@@ -203,4 +203,5 @@ public static class Constants
     public const string PolicyRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Policies";
     public const string SystemPolicySubKey = @"Software\Microsoft\Windows\CurrentVersion\Policies\System";
     public const string ExplorerPolicySubKey = @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
+    public const string GroupPolicyExplorerSubKey = @"Software\Policies\Microsoft\Windows\Explorer";
 }

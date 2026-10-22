@@ -293,18 +293,22 @@ public class ProcessMonitorService : IDisposable
                 }
             }
 
-            // Check window visibility: interactive tools have a visible top-level window
-            try
+            // Only for background-safe Windows tools (cmd, powershell, etc.), ignore headless background tasks.
+            // Prohibited tools such as DisplaySwitch, snippingtool, cheat tools, etc., are always violations regardless of MainWindowHandle.
+            if (BackgroundSafeWindowsTools.Contains(normalizedName))
             {
-                IntPtr mainWindow = proc.MainWindowHandle;
-                if (mainWindow == IntPtr.Zero || !IsWindowVisible(mainWindow))
+                try
+                {
+                    IntPtr mainWindow = proc.MainWindowHandle;
+                    if (mainWindow == IntPtr.Zero || !IsWindowVisible(mainWindow))
+                    {
+                        return false;
+                    }
+                }
+                catch
                 {
                     return false;
                 }
-            }
-            catch
-            {
-                return false;
             }
         }
 

@@ -32,15 +32,17 @@
                            Margin="0,0,0,20"/>
                 
                 <TextBlock x:Name="txtCountdown"
-                           Text="Aplikasi akan ditutup otomatis dalam 5 detik."
+                           Text="Ujian telah selesai. Aplikasi terkunci dan hanya dapat ditutup oleh pengawas dengan password."
                            FontSize="14"
                            FontStyle="Italic"
                            Foreground="#546E7A"
+                           TextAlignment="Center"
+                           TextWrapping="Wrap"
                            HorizontalAlignment="Center"
                            Margin="0,0,0,28"/>
                 
                 <Button x:Name="btnExitNow"
-                        Content="Keluar Sekarang"
+                        Content="Keluar (Pengawas)"
                         Width="200"
                         Height="44"
                         Background="#2E7D32"

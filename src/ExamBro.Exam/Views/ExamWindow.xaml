@@ -11,7 +11,8 @@
         ShowInTaskbar="False"
         Background="#000000"
         PreviewMouseWheel="OnWindowPreviewMouseWheel"
-        PreviewKeyDown="OnWindowPreviewKeyDown">
+        PreviewKeyDown="OnWindowPreviewKeyDown"
+        PreviewKeyUp="OnWindowPreviewKeyUp">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
 
