@@ -1,258 +1,289 @@
-# ExamBro - Secure Kiosk Exam Browser for Windows 10/11
+# WinVox ExamBro
 
-ExamBro adalah solusi peramban ujian aman (*secure exam browser*) berbasis native Windows Presentation Foundation (WPF) dan Microsoft Edge WebView2, yang dirancang khusus untuk mengunci sistem operasi Windows 10 dan Windows 11 selama pelaksanaan ujian berbasis komputer (CBT / Computer-Based Testing).
+Peramban ujian aman berbasis WPF dan Microsoft Edge WebView2 untuk mengunci lingkungan desktop Windows 10 dan Windows 11 selama pelaksanaan ujian berbasis komputer (CBT / Computer-Based Testing).
+
+Aplikasi ini mengisolasi workstation peserta, memblokir shortcut keyboard berbahaya, menonaktifkan perpindahan jendela, mencegah perekaman layar, dan berkomunikasi langsung dengan server ujian lokal maupun berbasis web seperti projectCBT.
 
 ---
 
-## DAFTAR ISI
+## Daftar Isi
+
 1. [Fitur Utama](#fitur-utama)
-2. [Arsitektur Solusi](#arsitektur-solusi)
-3. [Arsitektur Keamanan & Hardening](#arsitektur-keamanan--hardening)
-4. [Integrasi & Kompatibilitas 100% dengan projectCBT](#integrasi--kompatibilitas-100-dengan-projectcbt)
-5. [Mode Pengembangan Aman (--dev-safe)](#mode-pengembangan-aman---dev-safe)
-6. [Mekanisme Pemulihan Sistem (Crash Recovery)](#mekanisme-pemulihan-sistem-crash-recovery)
-7. [Prasyarat Sistem](#prasyarat-sistem)
-8. [Panduan Build & Publish](#panduan-build--publish)
-9. [Panduan Deployment & Konfigurasi Awal](#panduan-deployment--konfigurasi-awal)
-10. [Daftar Asumsi & Keputusan Keamanan](#daftar-asumsi--keputusan-keamanan)
-11. [Checklist Pengujian Manual untuk Pengawas / QA](#checklist-pengujian-manual-untuk-pengawas--qa)
+2. [Arsitektur Sistem](#arsitektur-sistem)
+3. [Alur Kerja Aplikasi](#alur-kerja-aplikasi)
+4. [Struktur Repositori](#struktur-repositori)
+5. [Prasyarat Sistem](#prasyarat-sistem)
+6. [Panduan Build dan Kompilasi](#panduan-build-dan-kompilasi)
+7. [Tutorial Deployment](#tutorial-deployment)
+   - [Metode 1: Mode Portable](#metode-1-mode-portable-disarankan)
+   - [Metode 2: Installer Inno Setup](#metode-2-installer-inno-setup)
+   - [Distribusi Massal di Laboratorium Komputer](#distribusi-massal-di-laboratorium-komputer)
+8. [Panduan Penggunaan Siswa](#panduan-penggunaan-siswa)
+9. [Panduan Pengaturan Proktor dan Administrator](#panduan-pengaturan-proktor-dan-administrator)
+10. [Integrasi dengan projectCBT](#integrasi-dengan-projectcbt)
+11. [Mekanisme Keamanan dan Hardening](#mekanisme-keamanan-dan-hardening)
+12. [Ketahanan Sistem dan Pemulihan Pasca Gangguan](#ketahanan-sistem-dan-pemulihan-pasca-gangguan)
+13. [Pemecahan Masalah](#pemecahan-masalah)
+14. [Referensi Cepat dan Nilai Bawaan](#referensi-cepat-dan-nilai-bawaan)
 
 ---
 
-## FITUR UTAMA
+## Fitur Utama
 
-- **Single Instance Enforcement**: Menggunakan named system Mutex (`Global\ExamBro_SingleInstance_Mutex`).
-- **Kiosk Fullscreen & Topmost Lock**: Window tanpa border, menutupi seluruh layar, selalu berada di lapisan paling atas (*Topmost*), taskbar Windows disembunyikan.
-- **Focus Guard Aktif**: Memasang `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` dan `AttachThreadInput` untuk segera merebut kembali fokus jika ada jendela asing yang mencoba muncul.
-- **Pemblokiran Keyboard Tingkat Rendah**: Low-Level Keyboard Hook (`WH_KEYBOARD_LL`) di-pin di memori untuk memblokir tombol Windows (kiri/kanan), Alt+Tab, Alt+Esc, Ctrl+Esc, Alt+F4, Alt+Space, Ctrl+Shift+Esc, PrintScreen, Menu/Apps, tombol fungsi (F1, F11, F12), dan shortcut browser (Ctrl+N, Ctrl+T, Ctrl+W, Ctrl+Shift+I/J/C, dll.).
-- **Pembatasan Sistem Tanpa Admin**: Menonaktifkan Task Manager (`DisableTaskMgr`), Lock Workstation (`DisableLockWorkstation`), Change Password (`DisableChangePassword`), dan Logoff (`NoLogoff`) via HKCU registry policies. Menonaktifkan shortcut aksesibilitas (StickyKeys, FilterKeys, ToggleKeys).
-- **Anti-Screenshot & Anti-Recording**: Proteksi layar menggunakan API `SetWindowDisplayAffinity` (`WDA_EXCLUDEFROMCAPTURE`, fallback `WDA_MONITOR`).
-- **Hardening WebView2**: Profil InPrivate terisolasi di `%LocalAppData%\ExamBro\WebView2Profile`, DevTools nonaktif, klik kanan dinonaktifkan, accelerator keys browser dimatikan, download dibatalkan, pembatasan izin perangkat keras (kamera, mikrofon, lokasi), dan error page internal kustom.
-- **Whitelist Navigasi Ketat**: Hanya mengizinkan URL yang cocok dengan pola wildcard yang diizinkan. Pemblokiran skema berbahaya (`file:`, `javascript:`, `view-source:`, dll.). Deteksi Exit URL otomatis untuk menyelesaikan ujian.
-- **Monitoring Lingkungan**: Pemantauan proses terlarang per 1 detik (dengan pengecualian proses internal WebView2), deteksi Virtual Machine (WMI BIOS, MAC OUI, registry, hypervisor CPUID), deteksi Remote Desktop (`SM_REMOTESESSION`), deteksi debugger, dan pemantauan jumlah monitor.
-- **Hak Penuh Administrator**: Klien ujian (`ExamBro.Exam.exe`) dan aplikasi pengaturan (`ExamBro.Config.exe`) berjalan dengan hak akses penuh Administrator (`requireAdministrator`) untuk menjamin penegakan kiosk, pencegahan terminasi paksa, dan kemampuan mematikan proses ilegal berhak tinggi.
-- **Dukungan Mode Portable**: Dapat dijalankan langsung dalam bentuk portable (cukup copy-paste folder atau jalankan dari flashdisk) tanpa perlu instalasi. Membaca berkas `exambro.cfg` lokal di folder aplikasi terlebih dahulu.
-- **Keluar Aman Wajib Kombinasi `Ctrl + C + B` & Password Pengawas**: Keluar dari mode ujian wajib menekan kombinasi `Ctrl + C + B` bersamaan dan memasukkan kata sandi pengawas yang diverifikasi menggunakan PBKDF2-HMAC-SHA256 (310.000 iterasi, constant-time compare). Lockout otomatis 30 detik setelah 5 kali salah.
+- **Penguncian Kiosk Penuh**: Jendela maximized borderless yang menutupi taskbar Windows di seluruh monitor aktif dan dipatok pada status Topmost.
+- **Pemblokiran Keyboard Tingkat Rendah**: P/Invoke hook `WH_KEYBOARD_LL` memblokir tombol Windows, Alt+Tab, Alt+Esc, Ctrl+Esc, Alt+F4, Ctrl+Shift+Esc, PrintScreen, Menu Apps, dan shortcut browser.
+- **Penyaringan Kernel dan Penanganan SAS**: Mencegah interupsi Ctrl+Alt+Del menggunakan Keyboard Filter (WEKF) pada edisi Windows yang mendukung, serta pemulihan fokus aktif secara instan jika layar keamanan Winlogon muncul.
+- **Penjaga Fokus Aktif**: WinEvent hook `EVENT_SYSTEM_FOREGROUND` dan `AttachThreadInput` segera merebut kembali fokus jika ada jendela asing yang mencoba tampil ke latar depan.
+- **Anti Screenshot dan Anti Rekam Layar**: Memanfaatkan Windows API hardware-level `SetWindowDisplayAffinity` (`WDA_EXCLUDEFROMCAPTURE`), membuat hasil tangkapan layar dan rekaman aplikasi seperti OBS, Snipping Tool, atau Discord menjadi hitam pekat.
+- **Hardening WebView2**: Profil browser terisolasi, DevTools dimatikan, klik kanan dinonaktifkan, tombol akselerator peramban dinonaktifkan, download diblokir otomatis, dan sertifikat HTTPS lokal self-signed dilewati tanpa menampilkan layar peringatan merah.
+- **Whitelisting Navigasi**: Akses hanya diizinkan untuk pola URL yang telah didaftarkan. Skema berisiko seperti `file:`, `javascript:`, `view-source:`, dan `ftp:` diblokir langsung.
+- **Pemindai Proses Terlarang**: Monitor latar belakang memindai proses terlarang (browser umum, alat remote desktop, cheat tool, sniffer paket) setiap 1 detik dengan pengecualian otomatis untuk proses pembantu internal WebView2.
+- **Tutup Aplikasi 1 Klik**: Layar pra-ujian mendeteksi proses terlarang dan menyediakan tombol untuk mematikan semua proses tersebut sekaligus sebelum ujian dimulai.
+- **Penguncian Registry Pengguna**: Menetapkan kebijakan HKCU sementara untuk menonaktifkan Task Manager, Lock Workstation, Change Password, dan opsi Logoff. Seluruh nilai registri asli dicatat dan dikembalikan saat aplikasi ditutup.
+- **Dua Arah dengan projectCBT**: Mendukung bridge JavaScript `window.LouisVoxExamApp`, pelaporan insiden native ke log server, penyerahan ujian otomatis saat mencapai rute finish, dan pembukaan kunci jarak jauh (Remote Unlock) dari dashboard pengawas.
+- **Dua Format Distribusi**: Berjalan langsung tanpa instalasi (Portable single-file) atau dipasang melalui berkas instalasi MSI / Inno Setup.
 
 ---
 
-## ARSITEKTUR SOLUSI
+## Arsitektur Sistem
 
-Proyek ini dibangun menggunakan struktur modular multi-project:
+WinVox ExamBro dibangun dengan arsitektur modular .NET 8 menggunakan pola WPF MVVM dan enkripsi terpadu:
+
+```mermaid
+flowchart TD
+    subgraph UI_Layer["Lapisan Antarmuka (WPF .NET 8)"]
+        ExamClient["ExamBro.Exam.exe (Klien Kiosk)"]
+        ConfigClient["ExamBro.Config.exe (Panel Admin)"]
+        PreFlight["Pemeriksaan Pra-Ujian"]
+        Overlay["Overlay Peringatan & Kunci"]
+    end
+
+    subgraph Security_Layer["Lapisan Keamanan & Hooking Win32"]
+        KeyHook["WH_KEYBOARD_LL (Hook Keyboard)"]
+        FocusGuard["Focus Guard (WinEvent Foreground)"]
+        DispAffinity["SetWindowDisplayAffinity (Anti-Capture)"]
+        ProcMonitor["Scanner Proses Latar Belakang (1 detik)"]
+        PolicyReg["Registry Policies (DisableTaskMgr, dll.)"]
+        SASDismiss["Pencegah Interupsi SAS / Winlogon"]
+    end
+
+    subgraph Engine_Layer["Lapisan Peramban (WebView2)"]
+        WV2["Microsoft Edge WebView2 Runtime"]
+        JSBridge["Bridge JavaScript (window.LouisVoxExamApp)"]
+        NavFilter["Filter Navigasi & Whitelist URL"]
+        SSLExempt["Auto Bypass Sertifikat HTTPS Lokal"]
+    end
+
+    subgraph Core_Layer["Pustaka Inti (ExamBro.Core)"]
+        Crypto["AES-256-GCM + DPAPI"]
+        Hasher["PBKDF2-HMAC-SHA256 (310.000 iterasi)"]
+        ConfigStore["exambro.cfg (Enkripsi Mandiri)"]
+        Recovery["recovery.json (Pemulihan Crash)"]
+    end
+
+    subgraph Server_Layer["Server Ujian Komputer"]
+        CBTServer["projectCBT / Web Server Sekolah (Port 8008 / 80 / 443)"]
+    end
+
+    ExamClient --> PreFlight
+    PreFlight --> ExamClient
+    ExamClient --> KeyHook
+    ExamClient --> FocusGuard
+    ExamClient --> DispAffinity
+    ExamClient --> ProcMonitor
+    ExamClient --> PolicyReg
+    ExamClient --> SASDismiss
+
+    ExamClient --> WV2
+    WV2 --> JSBridge
+    WV2 --> NavFilter
+    WV2 --> SSLExempt
+
+    ConfigClient --> Crypto
+    ConfigClient --> Hasher
+    ConfigClient --> ConfigStore
+
+    ExamClient --> Crypto
+    ExamClient --> ConfigStore
+    ExamClient --> Recovery
+
+    WV2 <-->|HTTP / WebSocket / Custom Headers| CBTServer
+    JSBridge <-->|Sinkronisasi Status & Pelanggaran| CBTServer
+```
+
+---
+
+## Alur Kerja Aplikasi
+
+Diagram berikut menunjukkan siklus hidup jalannya ujian dari persiapan pra-terbang hingga sistem dipulihkan:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Siswa
+    participant Klien as ExamBro.Exam.exe
+    participant System as Sistem Windows (Win32 & Registry)
+    participant WebView as WebView2 Browser
+    participant Server as Server CBT (projectCBT)
+    actor Proktor
+
+    Siswa->>Klien: Jalankan Run as administrator
+    Klien->>Klien: Validasi Mutex Tunggal & Enkripsi exambro.cfg
+    Klien->>System: Jalankan Pre-Flight Check (Admin, VM, Proses, Monitor)
+    alt Ada Proses Terlarang
+        Klien->>Siswa: Tampilkan dialog & tombol Tutup Aplikasi Terlarang
+        Siswa->>Klien: Klik Tutup Aplikasi Terlarang
+        Klien->>System: Hentikan proses terlarang
+    end
+    Klien->>System: Aktifkan Kiosk Lock (Hide Taskbar, DisableTaskMgr, WH_KEYBOARD_LL, WDA)
+    Klien->>System: Simpan recovery.json untuk proteksi crash
+    Klien->>WebView: Inisialisasi profil InPrivate, pasang header & JS Bridge
+    WebView->>Server: Muat Start URL dengan User-Agent khusus
+    Server-->>WebView: Render Halaman Ujian
+
+    loop Selama Ujian Berlangsung
+        Klien->>System: Monitor proses latar belakang tiap 1 detik
+        Klien->>System: Pertahankan fokus jendela terdepan
+        alt Deteksi Pelanggaran Sistem (Monitor ganda, proses ilegal)
+            Klien->>Server: window.__cbtReportViolation(...)
+            Klien->>Siswa: Tampilkan Overlay Peringatan / Kunci
+        end
+    end
+
+    alt Selesai Normal via Web CBT
+        Siswa->>WebView: Klik Selesai Ujian
+        WebView->>Server: Kirim jawaban dan arahkan ke rute finish
+        WebView->>Klien: Trigger event onExamFinished()
+        Klien->>Siswa: Tampilkan konfirmasi selesai & hitung mundur
+    else Keluar Manual oleh Proktor
+        Proktor->>Klien: Tekan Ctrl + C + B
+        Klien->>Proktor: Tampilkan dialog kata sandi pengawas
+        Proktor->>Klien: Masukkan password pengawas (PBKDF2 verify)
+    end
+
+    Klien->>System: Kembalikan nilai Registry asli (Task Manager, dsb.)
+    Klien->>System: Munculkan kembali Taskbar Windows
+    Klien->>System: Lepas hook keyboard dan hapus recovery.json
+    Klien->>Siswa: Aplikasi ditutup dengan aman
+```
+
+---
+
+## Struktur Repositori
 
 ```
 WinVoxExamBro/
-├── Directory.Build.props                  # Pengaturan build global (.NET 8, C# latest, Nullable)
-├── ExamBro.sln                            # Visual Studio Solution File
+├── Directory.Build.props                  # Konfigurasi build global (.NET 8, C# latest, Nullable)
+├── ExamBro.sln                            # Berkas solusi Visual Studio
+├── push_to_github.sh                      # Skrip helper otomatisasi pengujian, commit, dan push
+├── PETUNJUK_PENGGUNAAN_DAN_INSTALASI.txt  # Dokumentasi teks operasional lapangan
+├── README.md                              # Dokumentasi teknis, arsitektur, dan panduan lengkap
+│
 ├── src/
-│   ├── ExamBro.Core/                      # Class Library (.NET 8)
-│   │   ├── Constants.cs                   # Konstanta global, path, crypto salt, GUID
+│   ├── ExamBro.Core/                      # Pustaka logika inti dan kriptografi
+│   │   ├── Constants.cs                   # Definisi konstanta global, path, dan header
 │   │   ├── Models/
-│   │   │   └── ExamConfig.cs              # Struktur model konfigurasi & enums
+│   │   │   └── ExamConfig.cs              # Skema konfigurasi dan enumerasi aturan
 │   │   ├── Security/
-│   │   │   ├── ConfigEncryption.cs        # Enkripsi AES-256-GCM, DPAPI, ekspor/impor .exbcfg
-│   │   │   └── PasswordHasher.cs          # PBKDF2-HMAC-SHA256 & constant-time verify
+│   │   │   ├── ConfigEncryption.cs        # Enkripsi AES-256-GCM, DPAPI, dan ekspor .exbcfg
+│   │   │   └── PasswordHasher.cs          # Hashing kata sandi PBKDF2-HMAC-SHA256
 │   │   ├── Validation/
-│   │   │   ├── UrlMatcher.cs              # URL matching, glob to regex, scheme blocking
-│   │   │   └── ConfigValidator.cs         # Validasi integritas & kelengkapan konfigurasi
+│   │   │   ├── UrlMatcher.cs              # Pemcocokan wildcard URL dan blokir skema
+│   │   │   └── ConfigValidator.cs         # Validasi keabsahan data konfigurasi
 │   │   ├── Logging/
-│   │   │   ├── LoggerSetup.cs             # Inisialisasi Serilog rolling daily file sink
-│   │   │   └── WebhookSink.cs             # Sink HTTPS webhook dengan verifikasi HMAC
+│   │   │   ├── LoggerSetup.cs             # Inisialisasi Serilog rolling file logger
+│   │   │   └── WebhookSink.cs             # Pengiriman log via webhook HTTPS dengan tanda tangan HMAC
 │   │   └── Recovery/
-│   │       └── RecoveryState.cs           # State persistensi pemulihan sistem pasca crash
+│   │       └── RecoveryState.cs           # Serialisasi status pemulihan crash
 │   │
-│   ├── ExamBro.Exam/                      # WPF Application (Kiosk Client)
-│   │   ├── App.xaml / App.xaml.cs         # Startup, pre-flight check, single instance, recovery
+│   ├── ExamBro.Exam/                      # Aplikasi Kiosk Browser Ujian (WPF .NET 8)
+│   │   ├── app.manifest                   # Elevasi hak akses Administrator (requireAdministrator)
+│   │   ├── App.xaml / App.xaml.cs         # Titik masuk, deteksi mutex, inisialisasi pemulihan
 │   │   ├── Services/
-│   │   │   ├── KioskLockService.cs        # Win32 taskbar hide, HKCU registry, accessibility keys
-│   │   │   ├── KeyboardHookService.cs     # WH_KEYBOARD_LL low-level keyboard hook
-│   │   │   ├── FocusGuardService.cs       # SetWinEventHook foreground focus keeper
-│   │   │   ├── ClipboardService.cs        # Pembersihan & pemantauan clipboard format listener
-│   │   │   ├── ProcessMonitorService.cs   # Scanner proses background berkala 1 detik
-│   │   │   ├── EnvironmentDetector.cs     # Deteksi VM, RDP, Debugger, monitor change
-│   │   │   ├── ScreenProtectionService.cs # SetWindowDisplayAffinity & secondary monitor overlay
-│   │   │   └── ViolationManager.cs        # Manajemen & eskalasi pelanggaran peserta
+│   │   │   ├── KioskLockService.cs        # Win32 taskbar hide, HKCU registry, dan tombol aksesibilitas
+│   │   │   ├── KeyboardHookService.cs     # Low-level hook WH_KEYBOARD_LL dan filter WEKF
+│   │   │   ├── FocusGuardService.cs       # Penjaga jendela terdepan menggunakan WinEvent hook
+│   │   │   ├── ClipboardService.cs        # Pembersihan dan pemantauan format clipboard
+│   │   │   ├── ProcessMonitorService.cs   # Pemindai proses blacklist setiap 1 detik
+│   │   │   ├── EnvironmentDetector.cs     # Deteksi Virtual Machine, RDP, debugger, dan monitor
+│   │   │   ├── ScreenProtectionService.cs # SetWindowDisplayAffinity dan overlay monitor sekunder
+│   │   │   └── ViolationManager.cs        # Manajemen dan eskalasi strike pelanggaran
 │   │   ├── ViewModels/
-│   │   │   ├── ExamViewModel.cs           # State toolbar, jam, baterai, jaringan, navigasi
-│   │   │   └── PreFlightViewModel.cs      # State pengujian pra-terbang
-│   │   ├── Views/
-│   │   │   ├── ExamWindow.xaml (.cs)      # Jendela utama browser kiosk & hardening WebView2
-│   │   │   ├── PreFlightDialog.xaml (.cs) # Dialog hasil diagnosa sebelum ujian dimulai
-│   │   │   ├── WarningOverlay.xaml (.cs)  # Overlay peringatan pelanggaran (auto-dismiss)
-│   │   │   ├── LockScreen.xaml (.cs)      # Layar kunci pelanggaran dengan password pengawas
-│   │   │   ├── ExitDialog.xaml (.cs)      # Dialog konfirmasi keluar pengawas
-│   │   │   ├── SecondaryScreenOverlayWindow.xaml (.cs) # Penutup layar monitor sekunder
-│   │   │   └── CompletionOverlay.xaml (.cs)            # Notifikasi otomatis ujian selesai
-│   │   └── Resources/
-│   │       ├── ErrorPage.html             # Halaman error offline kustom
-│   │       └── exam.ico                   # Ikon aplikasi
+│   │   │   ├── ExamViewModel.cs           # State peramban, toolbar, jam, baterai, dan koneksi
+│   │   │   └── PreFlightViewModel.cs      # State verifikasi kesiapan sistem pra-ujian
+│   │   └── Views/
+│   │       ├── ExamWindow.xaml (.cs)      # Jendela utama browser kiosk dengan integrasi WebView2
+│   │       ├── PreFlightDialog.xaml (.cs) # Dialog diagnosa pra-terbang dan tombol tutup aplikasi
+│   │       ├── WarningOverlay.xaml (.cs)  # Overlay visual peringatan sementara
+│   │       ├── LockScreen.xaml (.cs)      # Layar penguncian ujian dengan validasi password
+│   │       ├── ExitDialog.xaml (.cs)      # Dialog konfirmasi keluar pengawas
+│   │       └── SecondaryScreenOverlayWindow.xaml (.cs) # Penutup layar hitam monitor sekunder
 │   │
-│   └── ExamBro.Config/                    # WPF Application (Admin Configuration Tool)
-│       ├── app.manifest                   # requireAdministrator UAC elevation
-│       ├── App.xaml / App.xaml.cs         # Inisialisasi, first-run wizard check, login prompt
+│   └── ExamBro.Config/                    # Panel Konfigurasi Administrator (WPF .NET 8)
+│       ├── app.manifest                   # Elevasi hak akses Administrator (requireAdministrator)
+│       ├── App.xaml / App.xaml.cs         # Inisialisasi wizard awal dan verifikasi login admin
 │       ├── ViewModels/
-│       │   ├── MainViewModel.cs           # Logika manajemen form tab, save, export/import
+│       │   ├── MainViewModel.cs           # Logika manajemen 6 tab pengaturan, simpan, ekspor/impor
 │       │   └── ViolationRuleItemViewModel.cs
-│       ├── Views/
-│       │   ├── MainWindow.xaml (.cs)      # UI Pengaturan 6 Tab (Umum, Navigasi, Keamanan, dll)
-│       │   ├── LoginDialog.xaml (.cs)     # Autentikasi Admin dengan pelindung brute-force
-│       │   ├── SetupWizardDialog.xaml (.cs) # Wisaya inisialisasi awal saat pertama kali dijalankan
-│       │   ├── TestUrlWindow.xaml (.cs)   # Jendela uji coba jangkauan Start URL non-kiosk
-│       │   ├── ChangePasswordDialog.xaml (.cs) # Dialog pergantian password Admin & Pengawas
-│       │   └── PasswordPromptDialog.xaml (.cs) # Dialog input password untuk .exbcfg
-│       └── Converters/
-│           ├── BoolToVisibilityConverter.cs
-│           └── EnumToStringConverter.cs
+│       └── Views/
+│           ├── MainWindow.xaml (.cs)      # Antarmuka panel konfigurasi
+│           ├── SetupWizardDialog.xaml (.cs) # Wisaya pemandu konfigurasi awal
+│           ├── LoginDialog.xaml (.cs)     # Dialog autentikasi admin dengan perlindungan brute-force
+│           ├── TestUrlWindow.xaml (.cs)   # Jendela uji koneksi ke Start URL non-kiosk
+│           └── ChangePasswordDialog.xaml (.cs) # Dialog penggantian password admin dan pengawas
 │
 ├── tests/
-│   └── ExamBro.Tests/                     # xUnit Test Suite (.NET 8)
-│       ├── UrlMatcherTests.cs             # Pengujian wildcard, blacklist, blocked schemes
-│       ├── PasswordHasherTests.cs         # Pengujian hashing PBKDF2 & constant-time verify
-│       ├── ConfigEncryptionTests.cs      # Pengujian export/import AES-GCM & deteksi manipulasi
-│       └── ConfigValidatorTests.cs        # Pengujian aturan validasi konfigurasi
+│   └── ExamBro.Tests/                     # Paket Pengujian Unit (xUnit .NET 8)
+│       ├── ConfigValidatorTests.cs        # 107 pengujian integritas konfigurasi
+│       ├── PasswordHasherTests.cs         # Pengujian keandalan PBKDF2 dan constant-time verify
+│       ├── ConfigEncryptionTests.cs      # Pengujian AES-256-GCM dan proteksi tamper
+│       └── UrlMatcherTests.cs             # Pengujian wildcard URL dan pemblokiran skema
 │
-└── installer/
-    └── setup.iss                          # Script Inno Setup Compiler (x64, ACL, WebView2 bootstrap)
+├── installer/
+│   └── setup.iss                          # Skrip kompilasi installer Inno Setup (x64)
+│
+└── .github/
+    └── workflows/
+        └── ci-cd.yml                      # Alur kerja build, test, packaging, dan release otomatis
 ```
 
 ---
 
-## ARSITEKTUR KEAMANAN & HARDENING
+## Prasyarat Sistem
 
-### 1. Kiosk Lock & P/Invoke Win32
-- **Penyembunyian Taskbar**:
-  Menggunakan `FindWindow("Shell_TrayWnd", null)` dan `FindWindow("Shell_SecondaryTrayWnd", null)`, kemudian dipanggil `ShowWindow(hWnd, SW_HIDE)`.
-- **Keyboard Hooking**:
-  `SetWindowsHookEx(WH_KEYBOARD_LL, ...)` dengan delegate yang disimpan di field class yang di-pin agar tidak terkena Garbage Collection. Semua kombinasi tombol sistem diblokir pada tingkat kernel driver message queue sebelum sampai ke aplikasi mana pun.
-- **Focus Guard**:
-  `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` mendengarkan perpindahan jendela aktif. Jika fokus keluar dari ExamBro, aplikasi langsung mengembalikan fokus menggunakan `AttachThreadInput` dan `SetForegroundWindow`.
-- **Proteksi Layar**:
-  `SetWindowDisplayAffinity(hWnd, WDA_EXCLUDEFROMCAPTURE)` memastikan bahwa perekam layar (seperti OBS, Discord, Windows Game Bar) dan screenshot tool (Snipping Tool, PrintScreen) hanya menangkap warna hitam atau jendela tembus pandang.
+### Lingkungan Eksekusi Klien Ujian
+- **Sistem Operasi**: Windows 10 (versi 1809 atau lebih baru) atau Windows 11 (arsitektur 64-bit / x64).
+- **Hak Akses**: Hak Administrator lokal (UAC elevation diperlukan untuk Win32 hooks dan kebijakan registri).
+- **WebView2 Runtime**: Microsoft Edge WebView2 Evergreen Runtime. Pada Windows 10 dan 11 versi modern, komponen ini telah terpasang secara bawaan.
+- **Runtime .NET**: Tidak memerlukan instalasi runtime .NET tambahan jika mendistribusikan berkas rilis berjenis *self-contained single-file*.
 
-### 2. Registry Policies (HKCU)
-Diterapkan pada level user saat ujian berlangsung tanpa memerlukan izin Administrator:
-- `HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System`
-  - `DisableTaskMgr = 1`: Mencegah Task Manager dibuka via Ctrl+Alt+Del atau shortcut apa pun.
-  - `DisableLockWorkstation = 1`: Mencegah peserta mengunci komputer.
-  - `DisableChangePassword = 1`: Mencegah penggantian kata sandi.
-- `HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer`
-  - `NoLogoff = 1`: Mencegah logout dari menu Windows.
-
-Nilai awal dari setiap registry key dicatat sebelum diubah, dan dipulihkan sepenuhnya saat sesi ujian ditutup normal, crash, maupun saat shutdown/logoff sistem.
-
-### 3. Hardening WebView2
-- **Data Folder Terisolasi**: `%LocalAppData%\ExamBro\WebView2Profile` dibersihkan cache dan cookienya pada saat start dan exit.
-- **Konfigurasi Lingkungan Browser**:
-  - `AreDevToolsEnabled = false` (Mencegah inspect element).
-  - `AreDefaultContextMenusEnabled = false` (Mencegah klik kanan).
-  - `AreBrowserAcceleratorKeysEnabled = false` (Mencegah F5, Ctrl+R, Ctrl+P, dll.).
-  - `IsStatusBarEnabled = false`.
-  - `IsPasswordAutosaveEnabled = false` & `IsGeneralAutofillEnabled = false`.
-  - `IsSwipeNavigationEnabled = false` & `IsPinchZoomEnabled = false`.
-- **Kontrol Jaringan & Navigasi**:
-  - `NavigationStarting`: Memeriksa setiap target URL terhadap `AllowedUrlPatterns` dan `BlockedUrlPatterns`. Jika melanggar, navigasi dibatalkan (`e.Cancel = true`) dan pelanggaran dicatat.
-  - `NewWindowRequested`: Selalu diatur `e.Handled = true`. Jika URL tujuan diizinkan, browser diarahkan di tab/jendela yang sama; jika tidak, dibatalkan.
-  - `DownloadStarting`: Selalu dibatalkan (`e.Cancel = true`) kecuali opsi `AllowDownloads` diaktifkan di konfigurasi.
-  - `PermissionRequested`: Semua izin perangkat keras (kamera, mikrofon, geolokasi, notifikasi) ditolak secara otomatis kecuali yang secara spesifik diizinkan untuk keperluan proctoring online.
-  - `User-Agent & Headers`: Ditambahkan suffix ` ExamBro/1.0.0 ExamBrowser/1.0.0 LouisVox/1.0.0` serta header kustom `X-ExamBro-Version`, `X-Exambrowser: 1`, `X-Exambro: 1`, `X-Exam-Browser: 1`, dan `X-CBT-Browser: 1` pada setiap HTTP request.
+### Lingkungan Pengembangan dan Build
+- **SDK**: .NET SDK 8.0.x (mendukung Windows Desktop Workload untuk WPF).
+- **Sistem Operasi**: Windows 10/11 x64 (untuk kompilasi Inno Setup dan eksekusi WPF penuh), atau Linux/macOS dengan .NET 8 SDK (untuk kompilasi pustaka ExamBro.Core dan eksekusi unit test).
+- **Compiler Installer**: Inno Setup versi 6.x (jika ingin membangun berkas installer tunggal `.exe`).
 
 ---
 
-## INTEGRASI & KOMPATIBILITAS 100% DENGAN projectCBT
+## Panduan Build dan Kompilasi
 
-ExamBro dirancang agar terhubung secara native, dua arah, dan 100% kompatibel dengan aplikasi backend/frontend **projectCBT** tanpa memerlukan modifikasi apa pun pada kode sumber `projectCBT`:
+### 1. Menjalankan Pengujian Unit
 
-### 1. Deteksi & Otentikasi Klien ExamBrowser
-- **Signature User-Agent**: Suffix User-Agent ` ExamBro/1.0.0 ExamBrowser/1.0.0 LouisVox/1.0.0` secara otomatis dikenali oleh filter `SiteSetting::isExamBrowser` dan middleware `EnsureExamBrowser` di projectCBT (`exambro`, `exambrowser`, `cbtbrowser`).
-- **HTTP Request Headers**: Setiap request WebView2 menyertakan header:
-  - `X-Exambrowser: 1`
-  - `X-Exambro: 1`
-  - `X-Exam-Browser: 1`
-  - `X-CBT-Browser: 1`
-  - `X-ExamBro-Version: 1.0.0`
-  Hal ini menjamin middleware `EnsureExamBrowser` pada rute `/siswa/*` dan `/exam/*` tidak pernah menolak akses siswa ke portal ujian.
+Jalankan perintah berikut untuk memastikan seluruh logika kriptografi, validasi konfigurasi, dan pencocokan URL berjalan normal:
 
-### 2. JavaScript Bridge Native (`window.LouisVoxExamApp`)
-ExamBro menginjeksi antarmuka JavaScript bridge `window.LouisVoxExamApp` ke dalam DOM dokumen WebView2 sebelum halaman dimuat:
-- `onWebExamConfig(maxStrikes, strikes, isLocked)`: Menerima batas toleransi dan status kunci sesi dari halaman `anti-cheat.blade.php`.
-- `onWebViolationRecorded(type, strikes, maxStrikes, message, isLocked)`: Menerima rekaman insiden dari web anti-cheat dan menampilkan overlay visual di layar siswa.
-- `isAlarmOverlayActive()`: Mengembalikan nilai `true` ketika ExamBro sedang menampilkan dialog password pengawas, layar peringatan, atau layar kunci.
-- `onWebSessionUnlocked(strikes)`: **Remote Unlock** — ketika pengawas membuka kunci siswa melalui Dashboard Pengawas web projectCBT, layar kunci ExamBro otomatis terbuka secara instan tanpa perlu mengetik ulang password di PC siswa.
-- `onExamFinished()`: **Auto-Release Kiosk** — ketika siswa menyelesaikan ujian di rute `/exam/finished/{session_uuid}`, ExamBro otomatis mendeteksi penyerahan lembar jawaban, menampilkan kartu konfirmasi "Ujian Berhasil Diserahkan", dan menutup peramban secara aman setelah hitungan mundur.
+```bash
+# Mengembalikan dependensi paket NuGet
+dotnet restore ExamBro.sln
 
-### 3. Pencegahan Total False Positive Anti-Cheat
-Sistem anti-cheat cerdas di `anti-cheat.blade.php` dan `useAntiCheat.js` projectCBT beroperasi harmonis dengan ExamBro tanpa false positive:
-- **`enforce_fullscreen`**: Karena ExamBro teridentifikasi sebagai ExamBrowser (`data-is-exambrowser="1"`), projectCBT langsung mengaktifkan sesi fullscreen tanpa memblokir halaman dengan modal gerbang fullscreen (`fullscreenGate`).
-- **`detect_split_screen`**: Jendela ExamBro bersifat maximized borderless (`innerW/screenW = 1.0`, `innerH/screenH >= 0.96`), melampaui ambang batas rasio split-screen projectCBT (`> 0.78` dan `> 0.72`), sehingga tidak memicu false alarm split-screen.
-- **`detect_window_blur` & `detect_tab_switch`**: Saat pengawas memasukkan password atau ExamBro menampilkan overlay peringatan, flag `window.__louisvox_suppress_blur` dan `isAlarmOverlayActive()` aktif, sehingga event blur/visibility diabaikan dan siswa tidak terkena penalti strike palsu.
-
-### 4. Pelaporan Pelanggaran Dua Arah (Native OS -> projectCBT)
-Ketika modul keamanan ExamBro mendeteksi anomali di level sistem operasi Windows, peristiwa tersebut langsung dilaporkan ke server projectCBT secara real-time:
-- **Proses Terlarang (Cheat Engine, Sniffer, VM)**: ExamBro memanggil `window.__cbtReportSevereViolation('Aplikasi terlarang terdeteksi di Windows: ...')` untuk mencatat pelanggaran berat `severe_unpin` di database audit `exam_violation_logs` dan menampilkan status di dashboard pengawas.
-- **Monitor Ganda Terpasang**: ExamBro memanggil `window.__cbtReportViolation('multi_monitor', { reason: '...' })`.
-- **Fokus Jendela Direbut**: ExamBro memanggil `window.__cbtReportViolation('window_blur', { reason: '...' })`.
-- **Akses Clipboard Ilegal**: ExamBro memanggil `window.__cbtReportViolation('clipboard_action', { reason: '...' })`.
-
----
-
-## MODE PENGEMBANGAN AMAN (--dev-safe)
-
-Untuk memfasilitasi pengujian dan pengembangan tanpa mengunci workstation developer:
-- Gunakan argumen: `ExamBro.Exam.exe --dev-safe` atau environment variable `EXAMBRO_DEV=1`.
-- Dalam mode ini:
-  - Keyboard hook **dinonaktifkan**.
-  - Taskbar Windows **tidak disembunyikan**.
-  - Registry policies (DisableTaskMgr, dll.) **tidak diubah**.
-  - Jendela dapat dipindahkan atau ditutup secara normal.
-  - Seluruh logika navigasi, whitelist/blacklist, WebView2 hardening, dan verifikasi konfigurasi **tetap berjalan aktif**.
-- **Perlindungan Release Build**:
-  Mode `--dev-safe` ditolak secara otomatis pada build rilis (`Release`) kecuali jika flag `DevSafeAllowedInRelease=true` diatur secara eksplisit oleh admin dalam konfigurasi.
-
----
-
-## MEKANISME PEMULIHAN SISTEM (CRASH RECOVERY)
-
-Jika komputer tiba-tiba mati listrik, proses ExamBro di-kill secara paksa oleh sistem operasi, atau terjadi kegagalan tak terduga:
-1. Setiap kali Kiosk Lock aktif, file status cadangan ditulis ke `%LocalAppData%\ExamBro\recovery.json`. File ini mencatat seluruh nilai registri asli, status taskbar, dan flag aksesibilitas.
-2. Saat aplikasi ExamBro dijalankan berikutnya, sistem mendeteksi keberadaan `recovery.json` dan secara otomatis memulihkan taskbar serta registry kebijakan sebelum melanjutkan.
-3. Administrator atau pengawas dapat memulihkan sistem secara manual kapan saja dengan menjalankan:
-   ```cmd
-   ExamBro.Exam.exe --restore
-   ```
-   Perintah ini akan membaca file status, mengembalikan registri dan taskbar ke kondisi normal, lalu langsung keluar.
-
----
-
-## PRASYARAT SISTEM
-
-- **Sistem Operasi**: Windows 10 (versi 1809 ke atas) atau Windows 11 (64-bit).
-- **Runtime**:
-  - Microsoft Edge WebView2 Evergreen Runtime (otomatis dibundel/diperiksa oleh installer).
-  - .NET Desktop Runtime 8.0 (jika menggunakan publish framework-dependent) atau **tidak memerlukan runtime tambahan** jika menggunakan publish self-contained single-file.
-
----
-
-## PANDUAN BUILD & PUBLISH
-
-### 1. Build & Menjalankan Unit Test
-Jalankan perintah berikut di PowerShell atau Command Prompt pada lingkungan pengembangan Windows dengan .NET 8 SDK:
-
-```powershell
-# Restore dependensi NuGet
-dotnet restore
-
-# Build seluruh solusi dalam konfigurasi Release
-dotnet build ExamBro.sln -c Release --no-restore
-
-# Jalankan seluruh unit test
+# Menjalankan seluruh pengujian unit
 dotnet test tests/ExamBro.Tests/ExamBro.Tests.csproj -c Release
 ```
 
-### 2. Publish Self-Contained Single-File (win-x64)
-Gunakan perintah berikut untuk menghasilkan binary mandiri (*single-file self-contained executable*) tanpa ketergantungan runtime eksternal:
+### 2. Kompilasi Executable Mandiri (Self-Contained Single-File)
+
+Gunakan perintah build berikut untuk menghasilkan berkas executable mandiri berarsitektur `win-x64`. Mode ini membundel seluruh pustaka runtime .NET ke dalam satu berkas `.exe`:
 
 ```powershell
-# 1. Publish ExamBro Client (Exam Browser)
+# 1. Kompilasi ExamBro Kiosk Client
 dotnet publish src/ExamBro.Exam/ExamBro.Exam.csproj `
   -c Release `
   -r win-x64 `
@@ -261,7 +292,7 @@ dotnet publish src/ExamBro.Exam/ExamBro.Exam.csproj `
   -p:IncludeNativeLibrariesForSelfExtract=true `
   -o dist/ExamBro.Exam
 
-# 2. Publish ExamBro Config Tool (Admin Configuration)
+# 2. Kompilasi ExamBro Config Tool
 dotnet publish src/ExamBro.Config/ExamBro.Config.csproj `
   -c Release `
   -r win-x64 `
@@ -271,115 +302,313 @@ dotnet publish src/ExamBro.Config/ExamBro.Config.csproj `
   -o dist/ExamBro.Config
 ```
 
-Hasil publish akan berada di direktori `dist/ExamBro.Exam/ExamBro.Exam.exe` dan `dist/ExamBro.Config/ExamBro.Config.exe`.
+Hasil kompilasi akan berada di:
+- `dist/ExamBro.Exam/ExamBro.Exam.exe` (Ukuran sekitar 157 MB, mandiri)
+- `dist/ExamBro.Config/ExamBro.Config.exe` (Ukuran sekitar 157 MB, mandiri)
 
 ### 3. Kompilasi Installer Inno Setup
-Unduh dan pasang [Inno Setup 6](https://jrsoftware.org/isdl.php), kemudian jalankan:
+
+Jika Anda memerlukan berkas instalasi formal:
 
 ```cmd
-iscc installer/setup.iss
+"C:\Program Files (x86)\Inno Setup 6\iscc.exe" installer\setup.iss
 ```
-File installer akhir akan berada di folder `dist/installer/ExamBro-Setup-v1.0.0.exe`.
+
+Berkas installer akhir akan tersimpan di direktori `dist/installer/`.
 
 ---
 
-## PANDUAN DEPLOYMENT & KONFIGURASI AWAL
+## Tutorial Deployment
 
-### Langkah 1: Instalasi pada Komputer Lab / Klien
-Jalankan `ExamBro-Setup-v1.0.0.exe` dengan hak Administrator. Installer akan:
-1. Memasang kedua file aplikasi ke folder Program Files (`C:\Program Files\ExamBro`).
-2. Membuat folder konfigurasi di `C:\ProgramData\ExamBro` dan mengatur hak akses (ACL):
-   - **Users (Siswa)**: Read & Execute.
-   - **Administrators**: Full Control.
-3. Memeriksa keberadaan WebView2 Runtime dan memasangnya secara otomatis jika belum ada.
-4. Membuat shortcut ExamBro di Desktop dan Start Menu.
+### Metode 1: Mode Portable (Disarankan)
 
-### Langkah 2: Konfigurasi Pertama Kali (First-Run Wizard)
-1. Buka aplikasi **Pengaturan ExamBro** dari Start Menu (akan meminta konfirmasi UAC Administrator).
-2. Wisaya Pengaturan Awal (*Setup Wizard*) akan muncul secara otomatis:
-   - Tentukan **Password Administrator** (untuk membuka aplikasi konfigurasi).
-   - Tentukan **Password Pengawas / Proctor** (untuk membuka layar terkunci dan keluar dari browser ujian).
-   - Masukkan **Start URL** (misal: `https://ujian.sekolah.sch.id/login`).
-3. Simpan konfigurasi. File terenkripsi `exambro.cfg` akan dibuat di `C:\ProgramData\ExamBro\exambro.cfg`.
+Mode portable adalah cara tercepat untuk mempersiapkan komputer ujian di sekolah tanpa perlu menyentuh instalasi sistem Windows.
 
-### Langkah 3: Distribusi Konfigurasi ke Seluruh Komputer Klien (Mass Deployment)
-1. Di komputer utama, buka `ExamBro.Config.exe` -> Tab **Admin**.
-2. Klik tombol **Ekspor Konfigurasi (.exbcfg)** dan masukkan password enkripsi paket.
-3. Salin file `.exbcfg` tersebut ke komputer klien (bisa via flashdisk atau jaringan lokal).
-4. Pada komputer klien, jalankan `ExamBro.Config.exe` -> Tab **Admin** -> Klik **Impor Konfigurasi (.exbcfg)**, masukkan password paket, lalu simpan.
+1. Siapkan folder portable yang berisi berkas:
+   - `ExamBro.Exam.exe` (program peramban siswa)
+   - `ExamBro.Config.exe` (program pengaturan proktor)
+   - `exambro.cfg` (berkas konfigurasi terenkripsi)
+2. Buka `ExamBro.Config.exe` pada satu komputer proktor untuk menentukan Start URL server sekolah, whitelist, dan kata sandi.
+3. Klik tombol Simpan Portable pada tab Admin. Berkas `exambro.cfg` mandiri akan dibuat di folder yang sama.
+4. Salin seluruh isi folder tersebut ke flashdisk atau bagikan melalui shared folder jaringan lokal (LAN).
+5. Pada komputer siswa, salin folder ke drive lokal (misalnya `D:\ExamBro\` atau Desktop) dan jalankan `ExamBro.Exam.exe`.
+
+### Metode 2: Installer Inno Setup
+
+Metode ini cocok untuk laboratorium komputer sekolah yang menggunakan citra sistem terpusat atau software deployment manager.
+
+1. Jalankan berkas installer `ExamBro-Setup-v1.0.0.exe` dengan hak Administrator.
+2. Program akan terpasang di folder `C:\Program Files\ExamBro\`.
+3. Installer secara otomatis membuat direktori data terproteksi di `C:\ProgramData\ExamBro\` dengan hak akses (ACL) yang aman:
+   - Akun siswa (Users) memiliki izin Read dan Execute.
+   - Akun proktor (Administrators) memiliki izin Full Control.
+4. Pintasan aplikasi akan otomatis tersedia di Desktop dan Start Menu siswa.
+
+### Distribusi Massal di Laboratorium Komputer
+
+Untuk menerapkan konfigurasi yang sama ke puluhan atau ratusan komputer klien secara serentak:
+
+```
+[Komputer Proktor / Server]
+           │
+           │  1. Simpan exambro.cfg menggunakan ExamBro.Config.exe
+           ▼
+   [exambro.cfg]
+           │
+           ├────────────────────────┬────────────────────────┐
+           ▼                        ▼                        ▼
+    [PC Klien Lab 01]        [PC Klien Lab 02]        [PC Klien Lab N]
+    Salin ke folder          Salin ke folder          Salin ke folder
+    aplikasi / ProgramData   aplikasi / ProgramData   aplikasi / ProgramData
+```
+
+Langkah operasional:
+1. Konfigurasikan seluruh aturan ujian pada satu komputer menggunakan `ExamBro.Config.exe`.
+2. Salin berkas `exambro.cfg` yang dihasilkan.
+3. Tempelkan berkas tersebut ke komputer siswa pada lokasi target:
+   - Jika menggunakan mode portable: Letakkan di satu folder yang sama dengan `ExamBro.Exam.exe`.
+   - Jika menggunakan installer: Letakkan di `C:\ProgramData\ExamBro\exambro.cfg`.
+4. Uji coba peluncuran pada salah satu PC siswa untuk memastikan halaman ujian langsung terbuka dengan benar.
 
 ---
 
-## DAFTAR ASUMSI & KEPUTUSAN KEAMANAN
+## Panduan Penggunaan Siswa
 
-| Area | Keputusan / Asumsi yang Diambil | Alasan Keamanan |
+### 1. Memulai Ujian
+1. Klik kanan pada berkas `ExamBro.Exam.exe` lalu pilih **Run as administrator** (atau klik dua kali dan setujui prompt UAC Windows).
+2. Jendela **Pemeriksaan Kesiapan Sistem** akan memeriksa integritas komputer:
+   - Status hak Administrator.
+   - Status lingkungan mesin virtual (jika diwajibkan perangkat fisik).
+   - Status sesi Remote Desktop.
+   - Pengecekan proses terlarang yang sedang aktif di latar belakang.
+3. Jika terdapat proses terlarang yang sedang berjalan, klik tombol **Tutup Aplikasi Terlarang** untuk menghentikan seluruh proses tersebut secara otomatis dalam 1 klik.
+4. Setelah seluruh status diagnosa menunjukkan status Lolos, klik **Mulai Ujian**. Layar akan langsung beralih ke mode kiosk layar penuh dan memuat halaman login ujian.
+
+### 2. Selama Ujian Berlangsung
+- Seluruh shortcut sistem dinonaktifkan: Tombol Windows, Alt+Tab, Alt+F4, Ctrl+Alt+Del, Ctrl+Shift+Esc, dan PrintScreen tidak dapat digunakan.
+- Layar dilindungi dari perekaman. Jika ada aplikasi pihak ketiga yang mencoba merekam layar di latar belakang, hasil rekaman hanya akan berupa layar hitam pekat.
+- Bekerjalah hanya pada halaman ujian yang disediakan. Jangan mencoba memasukkan tautan eksternal yang berada di luar subnet server sekolah.
+
+### 3. Menyelesaikan Ujian
+- Setelah selesai mengerjakan ujian pada sistem web CBT, klik tombol **Selesai** atau **Kirim Jawaban** di halaman web.
+- Ketika web mengarahkan ke halaman rute selesai (`/exam/finished/...`), ExamBro secara otomatis mendeteksi status tersebut, memunculkan kartu informasi bahwa ujian telah selesai diserahkan, dan menutup aplikasi secara otomatis dalam beberapa detik.
+- Taskbar dan seluruh fungsi sistem Windows akan langsung kembali normal.
+
+### 4. Keluar Manual dengan Bantuan Pengawas
+Jika peserta mengalami kendala teknis dan harus keluar dari aplikasi sebelum ujian selesai:
+1. Panggil pengawas ujian.
+2. Pengawas akan menekan kombinasi tombol `Ctrl + C + B` pada keyboard.
+3. Pengawas memasukkan kata sandi pengawas yang valid pada dialog yang muncul.
+4. Klik **Konfirmasi Keluar**. Aplikasi akan ditutup dan sistem dipulihkan sepenuhnya.
+
+---
+
+## Panduan Pengaturan Proktor dan Administrator
+
+Jalankan `ExamBro.Config.exe` dengan hak Administrator. Masukkan kata sandi Administrator (kata sandi bawaan: `admin123`).
+
+Panel pengaturan terdiri dari 6 bagian utama:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│ Panel Pengaturan ExamBro                                 [Simpan] [X]  │
+├───────────┬───────────┬───────────┬───────────┬───────────┬────────────┤
+│ 1. Umum   │ 2. URL    │ 3. Aman   │ 4. Pantau │ 5. Akun   │ 6. Log     │
+└───────────┴───────────┴───────────┴───────────┴───────────┴────────────┘
+```
+
+### Tab 1: Umum
+- **Alamat URL Halaman Awal (Start URL)**: Tentukan alamat portal ujian sekolah Anda (misalnya `http://192.168.70.9` atau `http://localhost:8008`).
+- **Judul Jendela dan Branding**: Ubah judul aplikasi dan pilih logo sekolah kustom (.png atau .ico). Logo akan tersimpan langsung ke dalam konfigurasi terenkripsi.
+- **Uji Koneksi Start URL**: Klik tombol **Uji Start URL** di pojok kanan atas untuk memvalidasi apakah server sekolah dapat dijangkau dari workstation tanpa mengunci layar.
+
+### Tab 2: Navigasi dan URL
+- **Whitelist Pola URL**: Daftarkan subnet atau domain server ujian. Format wildcard didukung (contoh: `192.168.0.0`, `*192.168.*`, `http://192.168.*/*`).
+- **Pola URL Keluar Otomatis (Exit URL)**: Tentukan URL yang memicu penutupan kiosk otomatis saat siswa selesai ujian (bawaan: `*/finished*`, `*/exam/finish*`, `*/logout*`).
+- **Pengaturan Audio Web CBT**: Opsi untuk mematikan seluruh audio dari peramban (Mute Audio) atau mengatur batas volume suara (0% sampai 100%) untuk ujian listening.
+
+### Tab 3: Kebijakan Keamanan
+- **Deteksi Mesin Virtual (Anti-VM)**: Aktifkan untuk mewajibkan peserta menggunakan laptop atau PC fisik. Matikan opsi ini jika Anda ingin menguji aplikasi di VirtualBox, VMware, atau lingkungan pengujian.
+- **Blokir Sesi Remote Desktop**: Menolak eksekusi aplikasi jika terdeteksi koneksi RDP, AnyDesk, atau VNC aktif.
+- **Kebijakan Monitor Ganda**: Tentukan tindakan jika siswa menyambungkan monitor kedua:
+  - `CoverAll`: Menampilkan penutup layar hitam pekat di seluruh monitor kedua dan seterusnya.
+  - `Block`: Menolak aplikasi berjalan sampai monitor tambahan dicabut.
+
+### Tab 4: Pemantauan Proses
+- Kelola daftar hitam nama proses terlarang yang akan dipantau setiap 1 detik.
+- Aplikasi bawaan Windows seperti CMD, PowerShell, dan Task Manager yang berjalan secara headless di latar belakang tanpa jendela desktop aktif dilindungi dari false positive.
+
+### Tab 5: Akun Administrator dan Pengawas
+- Ubah kata sandi login panel administrator.
+- Ubah kata sandi pengawas untuk konfirmasi keluar ujian manual (`Ctrl + C + B`).
+- Ubah kombinasi tombol pintasan keluar jika diperlukan.
+
+### Tab 6: Pencatatan Log dan Pemulihan
+- Konfigurasikan direktori penyimpanan berkas log Serilog harian.
+- Atur webhook HTTPS untuk mengirimkan insiden pelanggaran ke server log eksternal.
+- Ekspor atau impor berkas konfigurasi portabel (`.exbcfg`).
+
+---
+
+## Integrasi dengan projectCBT
+
+WinVox ExamBro terintegrasi secara langsung dengan aplikasi ujian berbasis web **projectCBT** tanpa memerlukan modifikasi pada kode sumber backend:
+
+### 1. Identifikasi Klien Ujian Resmi
+Setiap permintaan HTTP dari WebView2 secara otomatis menyertakan User-Agent khusus dan header validasi:
+
+- **User-Agent Suffix**: ` ExamBro/1.0.0 ExamBrowser/1.0.0 LouisVox/1.0.0`
+- **Header Validasi**:
+  - `X-Exambrowser: 1`
+  - `X-Exambro: 1`
+  - `X-Exam-Browser: 1`
+  - `X-CBT-Browser: 1`
+  - `X-ExamBro-Version: 1.0.0`
+
+Middleware `EnsureExamBrowser` dan pemeriksaan `SiteSetting::isExamBrowser` pada projectCBT mengenali tanda ini secara langsung.
+
+### 2. Bridge Dua Arah JavaScript (`window.LouisVoxExamApp`)
+Antarmuka JavaScript disuntikkan ke dalam dokumen web sebelum halaman dimuat:
+
+```javascript
+// Antarmuka yang disediakan oleh WinVox ExamBro untuk web CBT:
+window.LouisVoxExamApp = {
+    // Menerima sinkronisasi kuota strike pelanggaran dari web
+    onWebExamConfig: function(maxStrikes, strikes, isLocked) {},
+
+    // Menerima pencatatan pelanggaran dari web anti-cheat
+    onWebViolationRecorded: function(type, strikes, maxStrikes, message, isLocked) {},
+
+    // Memeriksa apakah dialog password atau overlay peringatan sedang aktif
+    isAlarmOverlayActive: function() {},
+
+    // Membuka kunci ujian peserta secara instan saat proktor menekan unlock di web
+    onWebSessionUnlocked: function(strikes) {},
+
+    // Mendeteksi pengiriman lembar jawaban dan menutup kiosk secara elegan
+    onExamFinished: function() {}
+};
+```
+
+### 3. Pencegahan Alarm Palsu (Zero False Positive)
+- **Deteksi Layar Penuh**: ExamBro berjalan dengan status maximized tanpa border, sehingga lolos dari pemeriksaan `enforce_fullscreen` projectCBT tanpa memunculkan modal gerbang fullscreen.
+- **Deteksi Split Screen**: Rasio jendela ExamBro terhadap resolusi monitor fisik bernilai penuh (`innerW/screenW = 1.0`), melewati batas toleransi split-screen.
+- **Supresi Blur Fokus**: Ketika pengawas mengetikkan kata sandi pada dialog keluar, flag `window.__louisvox_suppress_blur` aktif sehingga halaman web tidak mencatat penalti kehilangan fokus terhadap siswa.
+
+---
+
+## Mekanisme Keamanan dan Hardening
+
+### 1. Kiosk Lock dan Win32 Interop
+- **Penyembunyian Taskbar**: Memanggil `FindWindow("Shell_TrayWnd", null)` dan `FindWindow("Shell_SecondaryTrayWnd", null)`, kemudian mengeksekusi `ShowWindow(hWnd, SW_HIDE)`.
+- **Keyboard Hook**: `SetWindowsHookEx(WH_KEYBOARD_LL, ...)` dengan delegate statis yang di-pin di memori untuk mencegah pengumpulan sampah memori (Garbage Collection). Seluruh penekanan tombol sistem dipotong pada tingkat antrean pesan sebelum didistribusikan ke aplikasi.
+- **Display Affinity**: `SetWindowDisplayAffinity(hWnd, WDA_EXCLUDEFROMCAPTURE)` melindungi konten soal agar tidak dapat direkam oleh tool capture hardware maupun software.
+
+### 2. Kebijakan Registry Pengguna (HKCU)
+Saat ujian berlangsung, nilai berikut diterapkan pada registry sesi aktif:
+- `HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System`
+  - `DisableTaskMgr = 1`
+  - `DisableLockWorkstation = 1`
+  - `DisableChangePassword = 1`
+- `HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer`
+  - `NoLogoff = 1`
+
+Nilai konfigurasi awal dicatat sebelum ditimpa, dan dipulihkan kembali saat aplikasi ditutup normal maupun tidak normal.
+
+### 3. Isolasi Peramban WebView2
+- Menggunakan direktori data pengguna khusus di `%LocalAppData%\LouisVox ExamBro\WebView2Profile`.
+- Cache, cookie, dan berkas penyimpanan sesi dibersihkan saat sesi dimulai dan diakhiri.
+- Menonaktifkan fitur autofill password, menu klik kanan, DevTools (F12), dan shortcut akselerator peramban.
+
+---
+
+## Ketahanan Sistem dan Pemulihan Pasca Gangguan
+
+Aplikasi ini dilengkapi arsitektur ketahanan operasional untuk mengantisipasi insiden mati listrik mendadak, workstation mati paksa, atau crash:
+
+```
+[Gangguan Listrik Padam / Crash Workstation]
+                   │
+                   ▼
+     [Komputer Dihidupkan Kembali]
+                   │
+         ┌─────────┴─────────┐
+         ▼                   ▼
+[Opsi A: Buka ExamBro]   [Opsi B: Perintah Manual]
+Membaca recovery.json    Jalankan dari CMD:
+dan otomatis memulihkan  ExamBro.Exam.exe --restore
+taskbar serta registri
+```
+
+### 1. Penanganan Abandoned Mutex
+Jika sistem mati mendadak saat mutex tunggal masih tertahan, sistem penanganan mutex mendeteksi kondisi abandoned mutex dan langsung mengambil alih kepemilikan tanpa memunculkan pesan error bentrok instance.
+
+### 2. Pembersihan File Kunci Chromium
+Chromium dan WebView2 meninggalkan berkas `SingletonLock` ketika proses dihentikan paksa. ExamBro secara proaktif mendeteksi dan menghapus berkas lock tersebut sebelum menginisialisasi peramban, serta menambahkan flag engine `--disable-session-crashed-bubble` agar siswa tidak melihat dialog pemulihan tab.
+
+### 3. Perintah Pemulihan Manual (`--restore`)
+Jika komputer tidak sempat keluar secara normal dan taskbar belum kembali terlihat, buka Command Prompt sebagai Administrator dan jalankan:
+
+```cmd
+# Untuk versi instalasi
+"C:\Program Files\ExamBro\ExamBro.Exam.exe" --restore
+
+# Untuk versi portable
+ExamBro.Exam.exe --restore
+```
+
+Perintah ini akan membaca status dari `%LocalAppData%\LouisVox ExamBro\recovery.json`, mengembalikan Task Manager dan taskbar ke kondisi normal, lalu langsung keluar.
+
+### 4. Mode Pengembangan Aman (`--dev-safe`)
+Untuk menguji antarmuka dan integrasi web tanpa mengunci workstation developer:
+
+```cmd
+ExamBro.Exam.exe --dev-safe
+```
+
+Atau setel variabel lingkungan `EXAMBRO_DEV=1`. Pada mode ini, hook keyboard dan penyembunyian taskbar dinonaktifkan, sementara logika peramban, bridge, dan validasi URL tetap berjalan aktif. Mode ini secara otomatis ditolak pada build rilis kecuali jika diizinkan oleh administrator.
+
+---
+
+## Pemecahan Masalah
+
+### Taskbar tidak muncul setelah komputer mati mendadak
+Jalankan perintah pemulihan darurat dari Command Prompt Administrator:
+```cmd
+ExamBro.Exam.exe --restore
+```
+Taskbar Windows dan akses Task Manager akan langsung dipulihkan seketika.
+
+### Muncul pesan bahwa konfigurasi tidak ditemukan atau tidak valid
+Pastikan berkas `exambro.cfg` berada di dalam folder yang sama dengan `ExamBro.Exam.exe` (untuk mode portable), atau berada di `C:\ProgramData\ExamBro\exambro.cfg` (untuk mode installer). Jika berkas hilang, buka `ExamBro.Config.exe` untuk membuat konfigurasi baru.
+
+### Muncul pesan peringatan hak akses Administrator
+ExamBro membutuhkan hak akses Administrator untuk memasang hook keyboard sistem dan mengatur kebijakan registri. Klik kanan pada aplikasi dan pilih **Run as administrator**.
+
+### Halaman web ujian tidak dapat diakses
+1. Pastikan kabel jaringan LAN atau koneksi Wi-Fi ke server ujian telah terhubung.
+2. Periksa apakah IP server lokal dapat di-ping dari komputer klien.
+3. Pastikan Start URL pada `ExamBro.Config.exe` telah disetel ke alamat yang benar (contoh: `http://192.168.70.9` atau port `8008`).
+4. Pastikan subnet server telah didaftarkan pada Whitelist URL.
+
+### Muncul peringatan mesin virtual saat membuka aplikasi
+Jika komputer klien menggunakan lingkungan virtual untuk pengujian atau memiliki fitur Hyper-V aktif, buka `ExamBro.Config.exe` -> Tab **Keamanan**, lalu hilangkan tanda centang pada opsi **Verifikasi Perangkat Fisik (Deteksi & Blokir Mesin Virtual)**.
+
+---
+
+## Referensi Cepat dan Nilai Bawaan
+
+| Parameter | Nilai Bawaan | Keterangan |
 | :--- | :--- | :--- |
-| **Prioritas Keamanan** | Keamanan > Stabilitas > Fitur Tambahan | Jika ada ambiguitas perilaku, sistem memilih opsi paling ketat untuk mencegah kecurangan. |
-| **Penyimpanan Konfigurasi** | AES-256-GCM + DPAPI (Installed) & Portable Master Key (Portable) | Memastikan file konfigurasi tidak dapat dibaca atau dimodifikasi oleh peserta ujian. Tag autentikasi GCM mendeteksi modifikasi 1-bit sekalipun. Pada mode portable, berkas `exambro.cfg` mandiri dapat dicopy ke komputer lain tanpa terikat SID DPAPI mesin pembuat. |
-| **Hak Akses Klien Ujian** | Klien `ExamBro.Exam.exe` WAJIB berjalan dengan hak Administrator penuh (`requireAdministrator`) | Memberikan perizinan penuh dari OS untuk mengunci desktop, membunuh proses terlarang dengan integritas tinggi (CheatEngine, Task Manager, keylogger), mencegah bypass UIPI, dan mencegah penutupan paksa dari pihak luar. |
-| **Kombinasi Keluar** | Wajib menggunakan `Ctrl + C + B` + Kata Sandi Pengawas | Kombinasi tombol chorded 3 jari yang tidak sengaja tertekan siswa dan terlindungi oleh dialog verifikasi password PBKDF2. |
-| **Ctrl+Alt+Del** | Diblokir total di tingkat kernel (WEKF) dan sistem pencegah SAS aktif | Pada edisi yang mendukung Keyboard Filter (WEKF), kombinasi di-drop langsung di kernel driver hardware sehingga tidak memunculkan menu. Pada edisi lainnya, guardian aktif mendeteksi peralihan desktop ke Winlogon dan mengeksekusi auto-dismiss instan, sementara kebijakan registri (Task Manager, Lock, Logoff, Change Password) tetap terkunci penuh. |
-| **Start URL Override** | Argumen command line `--url=` diabaikan secara default | Mencegah peserta meluncurkan ujian ke server phising/palsu melalui manipulasi shortcut. Hanya diizinkan jika `AllowCommandLineOverride=true` diatur oleh admin. |
-| **Blacklist vs Whitelist URL** | Blacklist selalu menang atas Whitelist | Jika suatu pola URL cocok dengan whitelist tetapi juga cocok dengan blacklist, URL tersebut tetap diblokir. |
-| **Skema Protokol Berbahaya** | Skema `file:`, `javascript:`, `view-source:`, `edge:`, `chrome:`, `data:`, `ftp:` diblokir mutlak | Mencegah akses ke file sistem lokal, eksekusi skrip injeksi, atau membuka halaman konfigurasi peramban internal. |
-| **Penanganan Proses Milik WebView2** | Proses dengan nama `msedgewebview2.exe` yang merupakan child dari proses ExamBro dikecualikan dari blacklist | WebView2 memerlukan proses rendering dan utility helper miliknya sendiri untuk menampilkan halaman web. Hanya proses browser independen (Edge, Chrome, Firefox) yang ditindak. |
-| **Brute Force Lockout** | 5 kali kesalahan password -> penguncian 30 detik | Melindungi dialog keluar dan layar kunci dari upaya tebakan password berulang oleh peserta. |
-| **Recovery Pasca Crash** | Deteksi otomatis file `%LocalAppData%\ExamBro\recovery.json` pada peluncuran berikutnya | Menjamin workstation lab kembali ke kondisi normal meskipun terjadi insiden listrik padam atau crash fatal. |
-
----
-
-## PANDUAN PENGGUNAAN MODE PORTABLE (COPY-PASTE)
-
-ExamBro mendukung penuh format **Portable** tanpa perlu installer:
-1. Siapkan folder hasil publish atau copy folder aplikasi ExamBro (berisi `ExamBro.Exam.exe`, `ExamBro.Config.exe`, dan dependensinya).
-2. Jalankan `ExamBro.Config.exe` sebagai Administrator di salah satu komputer:
-   - Atur Start URL, Whitelist URL, dan Password Pengawas/Admin.
-   - Klik tombol **📦 Simpan Portable** atau **Simpan exambro.cfg Portable** di tab Admin.
-   - Berkas `exambro.cfg` mandiri terenkripsi akan tersimpan di dalam folder aplikasi tersebut.
-3. Cukup **copy-paste** seluruh folder tersebut ke flashdisk atau komputer peserta ujian (misal di `D:\ExamBro` atau Desktop).
-4. Di komputer peserta, jalankan `ExamBro.Exam.exe` (klik kanan *Run as administrator* jika diminta UAC).
-5. Aplikasi akan langsung mendeteksi `exambro.cfg` lokal dan mengunci sistem ke mode ujian dengan hak penuh Administrator.
-
----
-
-## CHECKLIST PENGUJIAN MANUAL UNTUK PENGAWAS / QA
-
-Gunakan daftar centang berikut untuk memvalidasi kesiapan sistem sebelum ujian berlangsung:
-
-### 1. Uji Coba Kiosk & Isolasi Desktop
-- [ ] **Hak Administrator**: Muncul prompt UAC saat membuka ExamBro, dan diagnosa pra-terbang mencatat status Administrator: Lolos.
-- [ ] **Layar Penuh**: ExamBro terbuka secara fullscreen tanpa title bar, border, tombol minimize, maximize, atau close.
-- [ ] **Taskbar**: Taskbar Windows menghilang sepenuhnya dari monitor utama dan monitor sekunder.
-- [ ] **Kunci Fokus**: Klik mouse di luar jendela atau mencoba menekan tombol kombinasi tidak memindahkan fokus dari ExamBro.
-
-### 2. Uji Coba Pemblokiran Tombol Keyboard
-- [ ] Tekan tombol **Windows (kiri / kanan)**: Menu Start tidak terbuka.
-- [ ] Tekan **Alt + Tab**: Jendela switcher aplikasi tidak muncul.
-- [ ] Tekan **Alt + F4**: Aplikasi tidak tertutup.
-- [ ] Tekan **Ctrl + Esc**: Menu Start tidak terbuka.
-- [ ] Tekan **Ctrl + Shift + Esc**: Task Manager tidak terbuka.
-- [ ] Tekan **PrintScreen**: Tidak ada aksi tangkapan layar, clipboard tidak terisi gambar.
-- [ ] Tekan **F12**, **Ctrl + Shift + I**, **Ctrl + Shift + J**: Konsol Developer Tools WebView2 tidak muncul.
-- [ ] Tekan **Ctrl + N**, **Ctrl + T**, **Ctrl + W**: Tidak membuka tab atau jendela peramban baru.
-
-### 3. Uji Coba Keamanan Sistem & Registry
-- [ ] Tekan **Ctrl + Alt + Del**: Kombinasi tombol sama sekali tidak merespon apa pun (tidak muncul layar biru/Cancel, langsung diblokir atau di-dismiss seketika dan jendela ujian tetap aktif di depan).
-- [ ] Jalankan perintah `taskmgr` dari shortcut (jika ada): Muncul pesan bahwa Task Manager telah dinonaktifkan oleh Administrator.
-
-### 4. Uji Coba Kontrol Navigasi Browser
-- [ ] **Start URL Otomatis**: Aplikasi langsung membuka halaman Start URL yang dikonfigurasi tanpa halaman awal perantara.
-- [ ] **Klik Kanan**: Menu konteks browser tidak muncul saat klik kanan pada halaman ujian.
-- [ ] **Tautan Eksternal**: Mengklik tautan menuju domain di luar whitelist diblokir dan memunculkan peringatan atau tetap berada di halaman ujian.
-- [ ] **Protokol Terlarang**: Menavigasi ke `file:///C:/` atau `javascript:...` diblokir secara otomatis.
-- [ ] **Exit URL**: Ketika peserta menyelesaikan ujian dan diarahkan ke URL akhir (Exit URL), muncul overlay "Ujian Selesai" dan aplikasi menutup otomatis setelah hitungan mundur.
-
-### 5. Uji Coba Multi-Monitor & Proteksi Tangkapan Layar
-- [ ] Pasang monitor kedua (kabel HDMI/DisplayPort): Monitor kedua tertutup layar hitam pekat (*CoverAll*) atau aplikasi menolak berjalan (*Block* sesuai konfigurasi).
-- [ ] Buka aplikasi OBS Studio atau Discord di latar belakang: Rekaman layar pada jendela ExamBro hanya menampilkan layar hitam pekat (*Display Affinity Exclusion*).
-
-### 6. Uji Coba Keluar & Pemulihan Sistem
-- [ ] Tekan kombinasi wajib **Ctrl + C + B**: Dialog konfirmasi kata sandi pengawas muncul.
-- [ ] Masukkan password salah sebanyak 5 kali: Sistem terkunci selama 30 detik.
-- [ ] Masukkan password pengawas yang benar: Aplikasi menutup secara elegan.
-- [ ] **Verifikasi Pemulihan**: Taskbar Windows kembali terlihat, Task Manager dapat dibuka kembali secara normal, dan fungsi tombol Windows kembali aktif.
-- [ ] **Simulasi Crash**: Jalankan ExamBro, lalu kill proses `ExamBro.Exam.exe` via remote tool / command prompt. Jalankan `ExamBro.Exam.exe --restore`. Pastikan taskbar dan registri kembali normal 100%.
+| **Kata Sandi Administrator** | `admin123` | Akses masuk aplikasi `ExamBro.Config.exe` |
+| **Kata Sandi Pengawas** | `proctor123` | Konfirmasi keluar manual dan buka layar kunci |
+| **Pintasan Keluar Manual** | `Ctrl + C + B` | Tekan tombol C lalu B sambil menahan tombol Ctrl |
+| **Start URL Bawaan** | `http://192.168.70.9` | Alamat halaman utama ujian |
+| **Port Default projectCBT** | `8008` | Port standar server CBT lokal |
+| **Penyimpanan Konfigurasi** | `exambro.cfg` | Terenkripsi AES-256-GCM mandiri |
+| **File Status Pemulihan** | `%LocalAppData%\LouisVox ExamBro\recovery.json` | Rekaman status crash recovery |
+| **Direktori Data WebView2** | `%LocalAppData%\LouisVox ExamBro\WebView2Profile` | Profil browser InPrivate terisolasi |
+| **Toleransi Brute-Force** | 5 kali salah | Sistem terkunci selama 30 detik |
+| **Interval Monitor Proses** | 1 detik | Pengecekan proses terlarang di latar belakang |
+| **Argumen Pemulihan** | `--restore` | Kembalikan taskbar dan registry tanpa menjalankan ujian |
+| **Argumen Mode Uji Coba** | `--dev-safe` | Jalankan tanpa mengunci keyboard dan taskbar |
