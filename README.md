@@ -2,6 +2,12 @@
 
 Peramban ujian aman berbasis WPF dan Microsoft Edge WebView2 untuk mengunci lingkungan desktop Windows 10 dan Windows 11 selama pelaksanaan ujian berbasis komputer (CBT / Computer-Based Testing).
 
+> **Pengembang & Hak Cipta**: **Erick Kresnamurti** (© 2024-2026). Seluruh hak cipta dilindungi undang-undang.
+> 
+> **Dokumentasi Lengkap Siap Cetak**:
+> - [Format PDF: docs/Panduan_Lengkap_WinVoxExamBro.pdf](docs/Panduan_Lengkap_WinVoxExamBro.pdf)
+> - [Format Word: docs/Panduan_Lengkap_WinVoxExamBro.docx](docs/Panduan_Lengkap_WinVoxExamBro.docx)
+
 Aplikasi ini mengisolasi workstation peserta, memblokir shortcut keyboard berbahaya, menonaktifkan perpindahan jendela, mencegah perekaman layar, dan berkomunikasi langsung dengan server ujian lokal maupun berbasis web seperti projectCBT.
 
 ---
@@ -25,6 +31,7 @@ Aplikasi ini mengisolasi workstation peserta, memblokir shortcut keyboard berbah
 12. [Ketahanan Sistem dan Pemulihan Pasca Gangguan](#ketahanan-sistem-dan-pemulihan-pasca-gangguan)
 13. [Pemecahan Masalah](#pemecahan-masalah)
 14. [Referensi Cepat dan Nilai Bawaan](#referensi-cepat-dan-nilai-bawaan)
+15. [Kredit dan Hak Cipta](#kredit-dan-hak-cipta)
 
 ---
 
@@ -612,3 +619,17 @@ Jika komputer klien menggunakan lingkungan virtual untuk pengujian atau memiliki
 | **Interval Monitor Proses** | 1 detik | Pengecekan proses terlarang di latar belakang |
 | **Argumen Pemulihan** | `--restore` | Kembalikan taskbar dan registry tanpa menjalankan ujian |
 | **Argumen Mode Uji Coba** | `--dev-safe` | Jalankan tanpa mengunci keyboard dan taskbar |
+
+---
+
+## Kredit dan Hak Cipta
+
+Perangkat lunak **WinVox ExamBro** (LouisVox ExamBro) beserta seluruh kode sumber, modul keamanan, dokumentasi teknis, dan arsitektur penguncian kiosk ini dikembangkan dan dikelola secara resmi oleh:
+
+- **Pengembang & Perancang Sistem**: Erick Kresnamurti
+- **Hak Cipta**: Hak Cipta © 2024-2026 Erick Kresnamurti. Seluruh hak cipta dilindungi undang-undang (*All rights reserved*).
+- **Repositori Resmi**: [https://github.com/erickkucing/WinVoxExamBro](https://github.com/erickkucing/WinVoxExamBro)
+- **Dokumentasi Terbitan**:
+  - Berkas PDF: [`docs/Panduan_Lengkap_WinVoxExamBro.pdf`](docs/Panduan_Lengkap_WinVoxExamBro.pdf)
+  - Berkas Word: [`docs/Panduan_Lengkap_WinVoxExamBro.docx`](docs/Panduan_Lengkap_WinVoxExamBro.docx)
+

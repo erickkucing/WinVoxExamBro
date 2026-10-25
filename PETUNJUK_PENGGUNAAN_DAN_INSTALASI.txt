@@ -5,6 +5,8 @@ Aplikasi Browser Ujian Resmi (Kiosk Mode & Anti-Curang)
 Mendukung Windows 10 & Windows 11 (64-bit)
 100% Siap Digunakan Secara Offline / Intranet Sekolah
 Kompatibel Penuh dengan Sistem projectCBT (Port 8008)
+Pengembang & Hak Cipta: Erick Kresnamurti (© 2024-2026)
+Seluruh hak cipta dilindungi undang-undang
 ================================================================================
 
 DAFTAR ISI:
@@ -279,4 +281,9 @@ KREDENSIAL BAWAAN (DEFAULT):
 - Kata Sandi Administrator : admin123
 - Kata Sandi Pengawas/Exit : proctor123
 - Tombol Pintasan Keluar   : Ctrl + C + B
+================================================================================
+KREDIT & HAK CIPTA:
+Pengembang / Software Architect : Erick Kresnamurti
+Hak Cipta © 2024-2026 Erick Kresnamurti. Seluruh hak cipta dilindungi.
+Repositori Resmi: https://github.com/erickkucing/WinVoxExamBro
 ================================================================================
