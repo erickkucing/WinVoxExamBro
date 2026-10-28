@@ -583,6 +583,7 @@ public partial class ExamWindow : Window
             const isRecentUnstable = (now - (window.__cbt_last_unstable_time || 0)) < 15000;
             const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
             return window.__exambro_overlay_active === true ||
+                   window.__cbt_lightbox_active === true ||
                    window.__louisvox_suppress_blur === true ||
                    window.__louisvox_network_unstable === true ||
                    isRecentUnstable ||

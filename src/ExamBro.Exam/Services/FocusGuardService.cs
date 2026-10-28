@@ -177,6 +177,10 @@ public class FocusGuardService : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern IntPtr FindWindow(string lpClassName, string? lpWindowName);
 
@@ -461,10 +465,6 @@ public class FocusGuardService : IDisposable
             }
             catch { }
 
-            // Inject Escape to dismiss shell flyout state
-            keybd_event(VK_ESCAPE, 0, 0, UIntPtr.Zero);
-            keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-
             ReclaimFocus();
             return true;
         }
@@ -537,14 +537,11 @@ public class FocusGuardService : IDisposable
         {
             IntPtr ccWnd = FindWindow("ControlCenterWindow", null);
             if (ccWnd == IntPtr.Zero) ccWnd = FindWindow("Shell_Flyout", null);
-            if (ccWnd == IntPtr.Zero) ccWnd = FindWindow("TopLevelWindowForOverflow", null);
 
-            if (ccWnd != IntPtr.Zero && ccWnd != _targetHwnd)
+            if (ccWnd != IntPtr.Zero && ccWnd != _targetHwnd && IsWindowVisible(ccWnd))
             {
                 ShowWindow(ccWnd, SW_HIDE);
                 PostMessage(ccWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                keybd_event(VK_ESCAPE, 0, 0, UIntPtr.Zero);
-                keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
                 ReclaimFocus();
             }
         }
