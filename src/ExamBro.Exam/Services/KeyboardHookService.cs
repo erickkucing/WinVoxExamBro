@@ -135,6 +135,7 @@ public class KeyboardHookService : IDisposable
     private const int VK_ESCAPE = 0x1B;
     private const int VK_SPACE = 0x20;
     private const int VK_SNAPSHOT = 0x2C; // Print Screen
+    private const int VK_INSERT = 0x2D;
     private const int VK_DELETE = 0x2E;
     private const int VK_LEFT = 0x25;
     private const int VK_RIGHT = 0x27;
@@ -388,7 +389,23 @@ public class KeyboardHookService : IDisposable
         bool winDown = vkCode == VK_LWIN || vkCode == VK_RWIN || IsKeyDown(VK_LWIN) || IsKeyDown(VK_RWIN) || _isWinKeyDown;
         if (winDown)
         {
+            // Explicitly trap Win+A, Win+N, Win+K, Win+P, Win+I, Win+W, Win+S, Win+Q, Win+C, Win+X, Win+Z, Win+B
+            if (vkCode == 0x41 || vkCode == 0x4E || vkCode == 0x4B || vkCode == 0x50 || vkCode == 0x49 ||
+                vkCode == 0x57 || vkCode == 0x53 || vkCode == 0x51 || vkCode == 0x43 || vkCode == 0x58 ||
+                vkCode == 0x5A || vkCode == 0x42)
+            {
+                reason = $"Win + {(char)vkCode} (Pusat Aksi / Flyout Sistem)";
+                return true;
+            }
+
             reason = "Tombol Windows / Pintasan Windows";
+            return true;
+        }
+
+        // Additional fail-safe: explicitly catch Win+A, Win+N, Win+K, Win+P if hook tracking lagged
+        if ((vkCode == 0x41 || vkCode == 0x4E || vkCode == 0x4B || vkCode == 0x50) && (_isWinKeyDown || IsKeyDown(VK_LWIN) || IsKeyDown(VK_RWIN)))
+        {
+            reason = "Win + A / N / K / P (Pusat Aksi / Quick Settings)";
             return true;
         }
 
@@ -544,12 +561,31 @@ public class KeyboardHookService : IDisposable
             }
         }
 
-        // 13. Ctrl + C / V / X - Configurable (AllowCopyPaste)
-        if (!_config.Security.AllowCopyPaste && ctrlDown && !altDown && !shiftDown)
+        // 13. Ctrl + C / V / X, Ctrl+Shift+V, Ctrl+Insert, Shift+Insert - Configurable (AllowCopyPaste)
+        // Completely disabled when AllowCopyPaste is false, NEVER counted as a violation.
+        if (!_config.Security.AllowCopyPaste)
         {
-            if (vkCode == 0x43 || vkCode == 0x56 || vkCode == 0x58) // 'C', 'V', 'X'
+            // Ctrl + C, Ctrl + V, Ctrl + X (with or without Shift, e.g. Ctrl+Shift+V)
+            if (ctrlDown && !altDown && (vkCode == 0x43 || vkCode == 0x56 || vkCode == 0x58)) // 'C', 'V', 'X'
             {
                 reason = $"Ctrl + {(char)vkCode} (Salin / Tempel / Potong)";
+                isViolation = false;
+                return true;
+            }
+
+            // Ctrl + Insert (Copy)
+            if (ctrlDown && !altDown && vkCode == (uint)VK_INSERT)
+            {
+                reason = "Ctrl + Insert (Salin)";
+                isViolation = false;
+                return true;
+            }
+
+            // Shift + Insert (Paste)
+            if (shiftDown && !altDown && !ctrlDown && vkCode == (uint)VK_INSERT)
+            {
+                reason = "Shift + Insert (Tempel)";
+                isViolation = false;
                 return true;
             }
         }

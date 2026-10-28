@@ -21,6 +21,8 @@ public class KioskLockService : IDisposable
     private readonly RecoveryState _recovery = new();
     private bool _engaged;
     private bool _disposed;
+    private IntPtr _registeredHwnd = IntPtr.Zero;
+    private bool _hotkeysRegistered;
 
     // Win32 P/Invoke Declarations
 
@@ -46,6 +48,14 @@ public class KioskLockService : IDisposable
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
     /// <summary>
     /// SystemParametersInfo: Queries or sets the parameters of the user interface.
@@ -87,6 +97,25 @@ public class KioskLockService : IDisposable
 
     private const int SW_HIDE = 0;
     private const int SW_SHOW = 5;
+
+    private const uint MOD_WIN = 0x0008;
+    private const uint MOD_NOREPEAT = 0x4000;
+
+    private static readonly (int id, uint vk, string name)[] ShellHotkeysToTrap = new[]
+    {
+        (0x9001, 0x41u, "Win+A (Action Center / Quick Settings)"),
+        (0x9002, 0x4Eu, "Win+N (Notification Center / Calendar)"),
+        (0x9003, 0x4Bu, "Win+K (Cast / Connect)"),
+        (0x9004, 0x50u, "Win+P (Project / Display Switch)"),
+        (0x9005, 0x49u, "Win+I (Settings)"),
+        (0x9006, 0x57u, "Win+W (Widgets)"),
+        (0x9007, 0x53u, "Win+S (Search)"),
+        (0x9008, 0x51u, "Win+Q (Search / Cortana)"),
+        (0x9009, 0x43u, "Win+C (Copilot / Chat)"),
+        (0x900A, 0x58u, "Win+X (Quick Link Menu)"),
+        (0x900B, 0x5Au, "Win+Z (Snap Layouts)"),
+        (0x900C, 0x42u, "Win+B (Notification Area)"),
+    };
 
     private const uint SPI_GETSTICKYKEYS = 0x003A;
     private const uint SPI_SETSTICKYKEYS = 0x003B;
@@ -140,7 +169,7 @@ public class KioskLockService : IDisposable
     /// Engages full kiosk lockdown: hides taskbars, writes registry lockdown policies,
     /// and suppresses accessibility hotkeys. Persists recovery state to disk.
     /// </summary>
-    public void Engage(ExamConfig config)
+    public void Engage(ExamConfig config, IntPtr targetHwnd = default)
     {
         if (_engaged)
         {
@@ -164,13 +193,23 @@ public class KioskLockService : IDisposable
             // 3. Disable accessibility shortcut keys (StickyKeys, FilterKeys, ToggleKeys)
             DisableAccessibilityHotkeys();
 
-            // 4. Terminate explorer.exe shell if requested by config
+            // 4. Register system hotkeys on exam window to consume Win+A / Win+N before shell
+            if (targetHwnd != IntPtr.Zero)
+            {
+                RegisterShellHotkeys(targetHwnd);
+            }
+
+            // 5. Terminate explorer.exe shell if requested by config, or force restart it to load policies
             if (config.Security.KillExplorerShell)
             {
                 KillExplorer();
             }
+            else if (config.Security.DisableRegistryPolicies)
+            {
+                RestartExplorerShellToApplyPolicies();
+            }
 
-            // 5. Persist recovery state to disk
+            // 6. Persist recovery state to disk
             _recovery.Save();
             _engaged = true;
 
@@ -199,6 +238,9 @@ public class KioskLockService : IDisposable
 
         try
         {
+            // 0. Unregister system hotkeys
+            UnregisterShellHotkeys();
+
             // 1. Restore taskbars
             ShowTaskbar();
 
@@ -287,16 +329,35 @@ public class KioskLockService : IDisposable
             SetPolicyAndSaveOriginal(Constants.SystemPolicySubKey, "HideFastUserSwitching", 1, useHklm);
 
             // Explorer policies: NoLogoff (Disable Sign out), NoClose (Disable Shutdown from SAS),
-            // DisableNotificationCenter (blocks Quick Settings / Action Center flyout), NoWinKeys (blocks Windows shortcut keys)
+            // DisableNotificationCenter (blocks Action Center flyout), DisableControlCenter / QuickSettings (blocks Windows 11 Quick Settings flyout),
+            // NoWinKeys (blocks Windows shortcut keys), HideNotificationCenterIcon, NoWindowsInkWorkspace, DisableNotificationCenterIcon
             SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "NoLogoff", 1, useHklm);
             SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "NoClose", 1, useHklm);
             SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "DisableNotificationCenter", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "DisableNotificationCenterIcon", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "HideNotificationCenterIcon", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "DisableControlCenter", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "HideControlCenter", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "HideControlCenterIcon", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "DisableQuickSettings", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "NoControlCenter", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "NoWindowsInkWorkspace", 1, useHklm);
             SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "NoWinKeys", 1, useHklm);
 
-            // Group Policy Explorer policies: DisableNotificationCenter, NoWinKeys
+            // Group Policy Explorer policies:
             SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "DisableNotificationCenter", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "DisableNotificationCenterIcon", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "HideNotificationCenterIcon", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "DisableControlCenter", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "HideControlCenter", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "HideControlCenterIcon", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "DisableQuickSettings", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "NoControlCenter", 1, useHklm);
             SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "NoWinKeys", 1, useHklm);
         }
+
+        // Display policy: NoDispCPL = 1 blocks display control panel / suppression of DisplaySwitch activation
+        SetPolicyAndSaveOriginal(Constants.SystemPolicySubKey, "NoDispCPL", 1, useHklm: false);
 
         // Multi-layer hook protection: ensure LowLevelHooksTimeout is set to 10000ms (10 seconds)
         // so Windows never unhooks or times out WH_KEYBOARD_LL during rapid repeated key presses
@@ -788,6 +849,147 @@ public class KioskLockService : IDisposable
         }
     }
 
+    private void RegisterShellHotkeys(IntPtr hWnd)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return;
+
+        if (hWnd == IntPtr.Zero)
+            return;
+
+        try
+        {
+            _registeredHwnd = hWnd;
+            int successCount = 0;
+            foreach (var (id, vk, name) in ShellHotkeysToTrap)
+            {
+                UnregisterHotKey(hWnd, id);
+                bool success = RegisterHotKey(hWnd, id, MOD_WIN | MOD_NOREPEAT, vk);
+                if (!success)
+                {
+                    success = RegisterHotKey(hWnd, id, MOD_WIN, vk);
+                }
+
+                if (success)
+                {
+                    successCount++;
+                }
+                else
+                {
+                    int err = Marshal.GetLastWin32Error();
+                    Log.Debug("RegisterHotKey {Name} returned {Err}", name, err);
+                }
+            }
+
+            _hotkeysRegistered = successCount > 0;
+            Log.Information("Registered {Count}/{Total} shell hotkeys on hWnd 0x{Hwnd:X}",
+                successCount, ShellHotkeysToTrap.Length, hWnd.ToInt64());
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to register shell hotkeys");
+        }
+    }
+
+    private void UnregisterShellHotkeys()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return;
+
+        if (!_hotkeysRegistered || _registeredHwnd == IntPtr.Zero)
+            return;
+
+        try
+        {
+            foreach (var (id, _, _) in ShellHotkeysToTrap)
+            {
+                UnregisterHotKey(_registeredHwnd, id);
+            }
+            _hotkeysRegistered = false;
+            Log.Information("Unregistered shell hotkeys from hWnd 0x{Hwnd:X}", _registeredHwnd.ToInt64());
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to unregister shell hotkeys");
+        }
+    }
+
+    private void RestartExplorerShellToApplyPolicies()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return;
+
+        IntPtr hwnd = _registeredHwnd;
+
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            try
+            {
+                Log.Information("Restarting explorer.exe to ensure session policies take effect immediately...");
+                var procs = Process.GetProcessesByName("explorer");
+                foreach (var p in procs)
+                {
+                    try
+                    {
+                        p.Kill();
+                        p.WaitForExit(3000);
+                    }
+                    catch { }
+                    finally
+                    {
+                        p.Dispose();
+                    }
+                }
+
+                // While explorer is dead, claim hotkeys so ExamBro captures them before explorer can launch
+                if (hwnd != IntPtr.Zero)
+                {
+                    RegisterShellHotkeys(hwnd);
+                }
+
+                Thread.Sleep(500);
+
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    UseShellExecute = true
+                });
+
+                // Taskbar may take 1-3 seconds to spawn; hide it as soon as it appears
+                for (int i = 0; i < 20; i++)
+                {
+                    Thread.Sleep(250);
+                    IntPtr primaryTray = FindWindow("Shell_TrayWnd", null);
+                    IntPtr secondaryTray = FindWindow("Shell_SecondaryTrayWnd", null);
+                    if (primaryTray != IntPtr.Zero)
+                    {
+                        ShowWindow(primaryTray, SW_HIDE);
+                    }
+                    if (secondaryTray != IntPtr.Zero)
+                    {
+                        ShowWindow(secondaryTray, SW_HIDE);
+                    }
+                    if (primaryTray != IntPtr.Zero)
+                    {
+                        break;
+                    }
+                }
+
+                // Re-verify hotkeys are claimed after explorer finishes initializing
+                if (hwnd != IntPtr.Zero)
+                {
+                    RegisterShellHotkeys(hwnd);
+                }
+
+                Log.Information("Explorer shell restarted and taskbars suppressed under active policies.");
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to restart explorer shell to apply policies.");
+            }
+        });
+    }
+
     // Static Recovery Method
 
     /// <summary>
@@ -849,11 +1051,28 @@ public class KioskLockService : IDisposable
                     DeleteRegistryValue(Constants.SystemPolicySubKey, "DisableTaskMgr", useHklm);
                     DeleteRegistryValue(Constants.SystemPolicySubKey, "DisableLockWorkstation", useHklm);
                     DeleteRegistryValue(Constants.SystemPolicySubKey, "DisableChangePassword", useHklm);
+                    DeleteRegistryValue(Constants.SystemPolicySubKey, "HideFastUserSwitching", useHklm);
+                    DeleteRegistryValue(Constants.SystemPolicySubKey, "NoDispCPL", useHklm);
                     DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoLogoff", useHklm);
                     DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoClose", useHklm);
                     DeleteRegistryValue(Constants.ExplorerPolicySubKey, "DisableNotificationCenter", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "DisableNotificationCenterIcon", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "HideNotificationCenterIcon", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "DisableControlCenter", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "HideControlCenter", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "HideControlCenterIcon", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "DisableQuickSettings", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoControlCenter", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoWindowsInkWorkspace", useHklm);
                     DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoWinKeys", useHklm);
                     DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "DisableNotificationCenter", useHklm);
+                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "DisableNotificationCenterIcon", useHklm);
+                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "HideNotificationCenterIcon", useHklm);
+                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "DisableControlCenter", useHklm);
+                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "HideControlCenter", useHklm);
+                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "HideControlCenterIcon", useHklm);
+                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "DisableQuickSettings", useHklm);
+                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "NoControlCenter", useHklm);
                     DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "NoWinKeys", useHklm);
                 }
                 DeleteRegistryValue(@"Control Panel\Desktop", "LowLevelHooksTimeout", useHklm: false);

@@ -258,4 +258,67 @@ public class KioskStabilityTests
         bool matches = UrlMatcher.MatchesExitUrl(url, config.Navigation.ExitUrlPattern);
         Assert.Equal(expectedExit, matches);
     }
+
+    [Fact]
+    public void AllowCopyPaste_DefaultIsFalse()
+    {
+        var config = ExamConfig.CreateDefault();
+        Assert.False(config.Security.AllowCopyPaste);
+    }
+
+    [Fact]
+    public void AllowCopyPaste_RoundtripsThroughEncryption()
+    {
+        var config = ExamConfig.CreateDefault();
+        config.Security.AllowCopyPaste = true;
+
+        byte[] encrypted = ConfigEncryption.EncryptPortableConfig(config);
+        var decrypted = ConfigEncryption.DecryptConfig(encrypted);
+
+        Assert.NotNull(decrypted);
+        Assert.True(decrypted.Security.AllowCopyPaste);
+
+        config.Security.AllowCopyPaste = false;
+        byte[] encrypted2 = ConfigEncryption.EncryptPortableConfig(config);
+        var decrypted2 = ConfigEncryption.DecryptConfig(encrypted2);
+
+        Assert.NotNull(decrypted2);
+        Assert.False(decrypted2.Security.AllowCopyPaste);
+    }
+
+    [Fact]
+    public void RecoveryState_SupportsShellAndDisplayPolicies()
+    {
+        var state = new ExamBro.Core.Recovery.RecoveryState();
+        string hkcuExplorer = $@"HKCU\{Constants.ExplorerPolicySubKey}\HideNotificationCenterIcon";
+        string hklmExplorer = $@"HKLM\{Constants.ExplorerPolicySubKey}\DisableNotificationCenterIcon";
+        string hkcuCtrlCenter = $@"HKCU\{Constants.ExplorerPolicySubKey}\DisableControlCenter";
+        string hklmCtrlCenter = $@"HKLM\{Constants.GroupPolicyExplorerSubKey}\DisableControlCenter";
+        string hkcuQuickSet = $@"HKCU\{Constants.ExplorerPolicySubKey}\DisableQuickSettings";
+        string hkcuInk = $@"HKCU\{Constants.ExplorerPolicySubKey}\NoWindowsInkWorkspace";
+        string hkcuDisp = $@"HKCU\{Constants.SystemPolicySubKey}\NoDispCPL";
+
+        state.OriginalRegistryValues[hkcuExplorer] = 0;
+        state.OriginalRegistryValues[hklmExplorer] = null;
+        state.OriginalRegistryValues[hkcuCtrlCenter] = 0;
+        state.OriginalRegistryValues[hklmCtrlCenter] = null;
+        state.OriginalRegistryValues[hkcuQuickSet] = 1;
+        state.OriginalRegistryValues[hkcuInk] = 0;
+        state.OriginalRegistryValues[hkcuDisp] = null;
+
+        Assert.Equal(7, state.OriginalRegistryValues.Count);
+        Assert.Equal(0, state.OriginalRegistryValues[hkcuExplorer]);
+        Assert.Null(state.OriginalRegistryValues[hklmExplorer]);
+        Assert.Equal(0, state.OriginalRegistryValues[hkcuCtrlCenter]);
+        Assert.Null(state.OriginalRegistryValues[hklmCtrlCenter]);
+        Assert.Equal(1, state.OriginalRegistryValues[hkcuQuickSet]);
+
+        // Roundtrip JSON serialization
+        string json = System.Text.Json.JsonSerializer.Serialize(state);
+        var restored = System.Text.Json.JsonSerializer.Deserialize<ExamBro.Core.Recovery.RecoveryState>(json);
+        Assert.NotNull(restored);
+        Assert.Equal(7, restored.OriginalRegistryValues.Count);
+        Assert.Equal(0, restored.OriginalRegistryValues[hkcuCtrlCenter]);
+        Assert.Null(restored.OriginalRegistryValues[hklmCtrlCenter]);
+    }
 }
