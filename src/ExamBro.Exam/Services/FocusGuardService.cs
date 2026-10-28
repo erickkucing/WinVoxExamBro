@@ -19,7 +19,6 @@ public class FocusGuardService : IDisposable
     private readonly WinEventDelegate _winEventDelegate; // Retain reference to prevent GC collection
     private readonly DispatcherTimer _backupTimer;
     private readonly DispatcherTimer _sasWatchTimer;
-    private long _lastRogueProcessCheckTimestamp;
     private bool _suspended;
     private bool _disposed;
 
@@ -177,16 +176,6 @@ public class FocusGuardService : IDisposable
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-
-    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool IsWindowVisible(IntPtr hWnd);
 
     // Constants & Delegates
 
@@ -398,138 +387,6 @@ public class FocusGuardService : IDisposable
     }
 
     /// <summary>
-    /// Evaluates whether a window handle corresponds to Quick Settings, Action Center,
-    /// or other Windows shell flyouts.
-    /// </summary>
-    private bool IsFlyoutWindow(IntPtr hwnd)
-    {
-        if (hwnd == IntPtr.Zero || IsOurWindow(hwnd))
-            return false;
-
-        var className = new System.Text.StringBuilder(256);
-        GetClassName(hwnd, className, className.Capacity);
-        string cls = className.ToString();
-
-        var titleBuf = new System.Text.StringBuilder(256);
-        GetWindowText(hwnd, titleBuf, titleBuf.Capacity);
-        string title = titleBuf.ToString();
-
-        // Exact class matches for Quick Settings & Action Center flyouts in Windows 10 & 11
-        if (cls.Equals("ControlCenterWindow", StringComparison.OrdinalIgnoreCase) ||
-            cls.Equals("Shell_Flyout", StringComparison.OrdinalIgnoreCase) ||
-            cls.Equals("TopLevelWindowForOverflow", StringComparison.OrdinalIgnoreCase) ||
-            cls.Equals("XamlExplorerHostIslandWindow", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        // Title matches
-        if (title.IndexOf("Action Center", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            title.IndexOf("Quick Settings", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            title.IndexOf("Control Center", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            title.IndexOf("Pusat Kontrol", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            title.IndexOf("Pusat Aksi", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            title.IndexOf("Notification", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            title.IndexOf("Project", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            title.IndexOf("Proyeksikan", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            title.IndexOf("DisplaySwitch", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            title.IndexOf("Windows Shell Experience", StringComparison.OrdinalIgnoreCase) >= 0)
-        {
-            return true;
-        }
-
-        // Generic XAML host classes - check visible state and owning process (including explorer.exe which hosts Win11 XAML islands)
-        if (cls.Equals("Windows.UI.Composition.DesktopWindowTreeHost", StringComparison.OrdinalIgnoreCase) ||
-            cls.Equals("Windows.UI.Core.CoreWindow", StringComparison.OrdinalIgnoreCase))
-        {
-            if (IsWindowVisible(hwnd))
-            {
-                try
-                {
-                    GetWindowThreadProcessId(hwnd, out uint pid);
-                    if (pid != 0)
-                    {
-                        using var proc = Process.GetProcessById((int)pid);
-                        string pname = proc.ProcessName;
-                        if (pname.Equals("explorer", StringComparison.OrdinalIgnoreCase) ||
-                            pname.Equals("ShellExperienceHost", StringComparison.OrdinalIgnoreCase) ||
-                            pname.Equals("StartMenuExperienceHost", StringComparison.OrdinalIgnoreCase) ||
-                            pname.Equals("SearchHost", StringComparison.OrdinalIgnoreCase) ||
-                            pname.Equals("DisplaySwitch", StringComparison.OrdinalIgnoreCase))
-                        {
-                            return true;
-                        }
-                    }
-                }
-                catch { }
-            }
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// Sweeps all top-level windows and immediately hides/closes any Quick Settings,
-    /// Action Center, or Shell flyout windows even before foreground focus changes.
-    /// </summary>
-    public void SweepAndKillShellFlyouts()
-    {
-        if (_suspended || !RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            return;
-
-        try
-        {
-            bool detectedFlyout = false;
-            EnumWindows((hwnd, _) =>
-            {
-                try
-                {
-                    if (IsFlyoutWindow(hwnd))
-                    {
-                        detectedFlyout = true;
-                        ShowWindow(hwnd, SW_HIDE);
-                        PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                    }
-                }
-                catch { }
-                return true; // continue enumeration
-            }, IntPtr.Zero);
-
-            if (detectedFlyout)
-            {
-                keybd_event(VK_ESCAPE, 0, 0, UIntPtr.Zero);
-                keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-                ReclaimFocus();
-            }
-
-            // Periodically kill rogue helper processes (DisplaySwitch, Nahimic, SystemHost) throttled to every 2 seconds
-            long now = Stopwatch.GetTimestamp();
-            long elapsedRogue = (now - _lastRogueProcessCheckTimestamp) * 1000 / Stopwatch.Frequency;
-            if (detectedFlyout || elapsedRogue >= 2000)
-            {
-                _lastRogueProcessCheckTimestamp = now;
-                foreach (string rogueName in new[] { "DisplaySwitch", "Nahimic", "SystemHost" })
-                {
-                    try
-                    {
-                        var procs = Process.GetProcessesByName(rogueName);
-                        foreach (var p in procs)
-                        {
-                            try { p.Kill(true); } catch { }
-                            p.Dispose();
-                        }
-                    }
-                    catch { }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Debug(ex, "SweepAndKillShellFlyouts encountered error");
-        }
-    }
-
-    /// <summary>
     /// Detects and dismisses the Windows 11 Quick Settings / Action Center flyout if it takes foreground.
     /// Returns true if the window was identified as the Quick Settings panel (regardless of dismiss success).
     /// </summary>
@@ -537,17 +394,69 @@ public class FocusGuardService : IDisposable
     {
         try
         {
-            if (!IsFlyoutWindow(hwnd))
+            var className = new System.Text.StringBuilder(256);
+            GetClassName(hwnd, className, className.Capacity);
+            string cls = className.ToString();
+
+            var titleBuf = new System.Text.StringBuilder(256);
+            GetWindowText(hwnd, titleBuf, titleBuf.Capacity);
+            string title = titleBuf.ToString();
+
+            bool isKnownFlyoutClass =
+                cls.Equals("ControlCenterWindow", StringComparison.OrdinalIgnoreCase) ||
+                cls.Equals("Windows.UI.Composition.DesktopWindowTreeHost", StringComparison.OrdinalIgnoreCase) ||
+                cls.Equals("Windows.UI.Core.CoreWindow", StringComparison.OrdinalIgnoreCase) ||
+                cls.Equals("XamlExplorerHostIslandWindow", StringComparison.OrdinalIgnoreCase) ||
+                cls.Equals("Shell_Flyout", StringComparison.OrdinalIgnoreCase) ||
+                cls.Equals("TopLevelWindowForOverflow", StringComparison.OrdinalIgnoreCase);
+
+            bool isFlyoutTitle =
+                title.IndexOf("Action Center", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                title.IndexOf("Quick Settings", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                title.IndexOf("Control Center", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                title.IndexOf("Notification", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                title.IndexOf("Project", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                title.IndexOf("Proyeksikan", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                title.IndexOf("DisplaySwitch", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            bool isShellProcess = false;
+            try
+            {
+                GetWindowThreadProcessId(hwnd, out uint pid);
+                if (pid != 0)
+                {
+                    using var proc = Process.GetProcessById((int)pid);
+                    string pname = proc.ProcessName;
+                    if (pname.Equals("ShellExperienceHost", StringComparison.OrdinalIgnoreCase) ||
+                        pname.Equals("StartMenuExperienceHost", StringComparison.OrdinalIgnoreCase) ||
+                        pname.Equals("SearchHost", StringComparison.OrdinalIgnoreCase) ||
+                        pname.Equals("DisplaySwitch", StringComparison.OrdinalIgnoreCase))
+                    {
+                        isShellProcess = true;
+                    }
+                }
+            }
+            catch { }
+
+            if (!isKnownFlyoutClass && !isFlyoutTitle && !isShellProcess)
                 return false;
 
-            Log.Warning("Quick Settings / Action Center / Shell flyout detected (HWND: 0x{Hwnd:X}). Dismissing immediately.", hwnd.ToInt64());
+            Log.Warning("Quick Settings / Action Center / Shell flyout detected (class={Class}, title={Title}). Dismissing immediately.", cls, title);
 
             // Hide and close window immediately
             ShowWindow(hwnd, SW_HIDE);
             PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
 
-            // Sweep and kill all associated flyout windows
-            SweepAndKillShellFlyouts();
+            // Kill DisplaySwitch process immediately if spawned
+            try
+            {
+                foreach (var p in Process.GetProcessesByName("DisplaySwitch"))
+                {
+                    try { p.Kill(true); } catch { }
+                    p.Dispose();
+                }
+            }
+            catch { }
 
             // Inject Escape to dismiss shell flyout state
             keybd_event(VK_ESCAPE, 0, 0, UIntPtr.Zero);
@@ -566,8 +475,6 @@ public class FocusGuardService : IDisposable
     private void OnBackupTimerTick(object? sender, EventArgs e)
     {
         if (_suspended || _targetHwnd == IntPtr.Zero) return;
-
-        SweepAndKillShellFlyouts();
 
         IntPtr currentFore = GetForegroundWindow();
         if (currentFore == IntPtr.Zero || IsOurWindow(currentFore))
@@ -589,9 +496,6 @@ public class FocusGuardService : IDisposable
     {
         if (_suspended || _targetHwnd == IntPtr.Zero || !RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             return;
-
-        // Sweep and suppress any Quick Settings / Action Center flyouts before they become active
-        SweepAndKillShellFlyouts();
 
         try
         {
@@ -621,6 +525,22 @@ public class FocusGuardService : IDisposable
             finally
             {
                 CloseDesktop(hDesk);
+            }
+        }
+        catch { }
+
+        // Periodically kill any spawned DisplaySwitch instances within 100ms
+        try
+        {
+            var dsProcs = Process.GetProcessesByName("DisplaySwitch");
+            if (dsProcs.Length > 0)
+            {
+                foreach (var p in dsProcs)
+                {
+                    try { p.Kill(true); } catch { }
+                    p.Dispose();
+                }
+                ReclaimFocus();
             }
         }
         catch { }
