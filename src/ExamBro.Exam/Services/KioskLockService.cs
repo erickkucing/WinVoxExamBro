@@ -285,16 +285,31 @@ public class KioskLockService : IDisposable
             SetPolicyAndSaveOriginal(Constants.SystemPolicySubKey, "DisableLockWorkstation", 1, useHklm);
             SetPolicyAndSaveOriginal(Constants.SystemPolicySubKey, "DisableChangePassword", 1, useHklm);
             SetPolicyAndSaveOriginal(Constants.SystemPolicySubKey, "HideFastUserSwitching", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.SystemPolicySubKey, "NoDispCPL", 1, useHklm);
 
             // Explorer policies: NoLogoff (Disable Sign out), NoClose (Disable Shutdown from SAS),
-            // DisableNotificationCenter (blocks Quick Settings / Action Center flyout), NoWinKeys (blocks Windows shortcut keys)
+            // DisableNotificationCenter (blocks Action Center flyout), DisableControlCenter / QuickSettings (blocks Windows 11 Quick Settings flyout),
+            // NoWinKeys (blocks Windows shortcut keys), HideNotificationCenterIcon, NoWindowsInkWorkspace
             SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "NoLogoff", 1, useHklm);
             SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "NoClose", 1, useHklm);
             SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "DisableNotificationCenter", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "DisableNotificationCenterIcon", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "HideNotificationCenterIcon", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "DisableControlCenter", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "HideControlCenter", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "DisableQuickSettings", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "NoControlCenter", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "NoWindowsInkWorkspace", 1, useHklm);
             SetPolicyAndSaveOriginal(Constants.ExplorerPolicySubKey, "NoWinKeys", 1, useHklm);
 
-            // Group Policy Explorer policies: DisableNotificationCenter, NoWinKeys
+            // Group Policy Explorer policies: DisableNotificationCenter, DisableControlCenter, DisableQuickSettings, NoWinKeys
             SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "DisableNotificationCenter", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "DisableNotificationCenterIcon", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "HideNotificationCenterIcon", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "DisableControlCenter", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "HideControlCenter", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "DisableQuickSettings", 1, useHklm);
+            SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "NoControlCenter", 1, useHklm);
             SetPolicyAndSaveOriginal(Constants.GroupPolicyExplorerSubKey, "NoWinKeys", 1, useHklm);
         }
 
@@ -849,11 +864,26 @@ public class KioskLockService : IDisposable
                     DeleteRegistryValue(Constants.SystemPolicySubKey, "DisableTaskMgr", useHklm);
                     DeleteRegistryValue(Constants.SystemPolicySubKey, "DisableLockWorkstation", useHklm);
                     DeleteRegistryValue(Constants.SystemPolicySubKey, "DisableChangePassword", useHklm);
+                    DeleteRegistryValue(Constants.SystemPolicySubKey, "HideFastUserSwitching", useHklm);
+                    DeleteRegistryValue(Constants.SystemPolicySubKey, "NoDispCPL", useHklm);
                     DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoLogoff", useHklm);
                     DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoClose", useHklm);
                     DeleteRegistryValue(Constants.ExplorerPolicySubKey, "DisableNotificationCenter", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "DisableNotificationCenterIcon", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "HideNotificationCenterIcon", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "DisableControlCenter", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "HideControlCenter", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "DisableQuickSettings", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoControlCenter", useHklm);
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoWindowsInkWorkspace", useHklm);
                     DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoWinKeys", useHklm);
                     DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "DisableNotificationCenter", useHklm);
+                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "DisableNotificationCenterIcon", useHklm);
+                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "HideNotificationCenterIcon", useHklm);
+                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "DisableControlCenter", useHklm);
+                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "HideControlCenter", useHklm);
+                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "DisableQuickSettings", useHklm);
+                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "NoControlCenter", useHklm);
                     DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "NoWinKeys", useHklm);
                 }
                 DeleteRegistryValue(@"Control Panel\Desktop", "LowLevelHooksTimeout", useHklm: false);

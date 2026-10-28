@@ -369,9 +369,19 @@ public partial class ExamWindow : Window
         }, 15000);
     });
 
-    // Multi-layer DOM capture to suppress F10 and function keys inside the web environment
+    // Multi-layer DOM capture to completely disable F10, Ctrl+C, Ctrl+V, Ctrl+X, Insert, and clipboard operations
     window.addEventListener('keydown', function(e) {
         if (e.key === 'F10' || e.keyCode === 121 || (e.keyCode >= 112 && e.keyCode <= 135)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+        }
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C' || e.key === 'v' || e.key === 'V' || e.key === 'x' || e.key === 'X' || e.keyCode === 67 || e.keyCode === 86 || e.keyCode === 88 || e.keyCode === 45)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+        }
+        if (e.shiftKey && (e.key === 'Insert' || e.keyCode === 45)) {
             e.preventDefault();
             e.stopPropagation();
             return false;
@@ -383,6 +393,31 @@ public partial class ExamWindow : Window
             e.stopPropagation();
             return false;
         }
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C' || e.key === 'v' || e.key === 'V' || e.key === 'x' || e.key === 'X' || e.keyCode === 67 || e.keyCode === 86 || e.keyCode === 88 || e.keyCode === 45)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+        }
+        if (e.shiftKey && (e.key === 'Insert' || e.keyCode === 45)) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+        }
+    }, true);
+    window.addEventListener('copy', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+    }, true);
+    window.addEventListener('cut', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+    }, true);
+    window.addEventListener('paste', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
     }, true);
 
     try {
@@ -445,8 +480,25 @@ public partial class ExamWindow : Window
         window.fetch = async function(input, init) {
             const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
 
-            // 1. Intercept pelaporan pelanggaran saat jaringan tidak stabil / putus sementara
+            // 1. Intercept pelaporan pelanggaran saat jaringan tidak stabil atau aksi salin/tempel tanpa pelanggaran
             if (url.includes('/violation')) {
+                try {
+                    if (init && init.body && typeof init.body === 'string') {
+                        const parsed = JSON.parse(init.body);
+                        const vt = parsed.violation_type || parsed.type || '';
+                        if (vt === 'copy' || vt === 'paste' || vt === 'cut' || vt === 'clipboard') {
+                            return new Response(JSON.stringify({
+                                action: 'ignored',
+                                message: 'Kombinasi Ctrl+C / Ctrl+V dinonaktifkan tanpa pelanggaran.',
+                                is_locked: false
+                            }), {
+                                status: 200,
+                                headers: { 'Content-Type': 'application/json' }
+                            });
+                        }
+                    }
+                } catch(e) {}
+
                 const now = Date.now();
                 const isUnstable = (typeof navigator !== 'undefined' && !navigator.onLine) ||
                                    window.__louisvox_suppress_blur === true ||
@@ -1143,8 +1195,27 @@ public partial class ExamWindow : Window
             return;
         }
 
+        // Multi-layer defense: silently block copy/paste shortcuts when AllowCopyPaste is false
+        if (!_config.Security.AllowCopyPaste)
+        {
+            bool isCtrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+            bool isShift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+
+            if (isCtrl && (e.Key == Key.C || e.Key == Key.V || e.Key == Key.X || e.Key == Key.Insert))
+            {
+                e.Handled = true;
+                return;
+            }
+
+            if (isShift && e.Key == Key.Insert)
+            {
+                e.Handled = true;
+                return;
+            }
+        }
+
         // Fallback for dev mode where low-level keyboard hook is not installed
-        if (_isDevSafe && (e.Key == Key.Escape || (Keyboard.Modifiers.HasFlag(ModifierKeys.Control) && (e.Key == Key.C || e.Key == Key.B))))
+        if (_isDevSafe && (e.Key == Key.Escape || (Keyboard.Modifiers.HasFlag(ModifierKeys.Control) && e.Key == Key.B)))
         {
             ShowExitConfirmation();
             e.Handled = true;
@@ -1157,6 +1228,24 @@ public partial class ExamWindow : Window
         if (realKey == Key.F10 || (realKey >= Key.F1 && realKey <= Key.F24 && realKey != Key.F4 && (!_config.Security.AllowRefresh || realKey != Key.F5)))
         {
             e.Handled = true;
+            return;
+        }
+
+        if (!_config.Security.AllowCopyPaste)
+        {
+            bool isCtrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+            bool isShift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+
+            if (isCtrl && (e.Key == Key.C || e.Key == Key.V || e.Key == Key.X || e.Key == Key.Insert))
+            {
+                e.Handled = true;
+                return;
+            }
+
+            if (isShift && e.Key == Key.Insert)
+            {
+                e.Handled = true;
+            }
         }
     }
 
@@ -1186,6 +1275,26 @@ public partial class ExamWindow : Window
         {
             int vk = wParam.ToInt32();
             if (vk == 0x79 || (vk >= 0x70 && vk <= 0x87 && vk != 0x73 && (!_config.Security.AllowRefresh || vk != 0x74)))
+            {
+                handled = true;
+                return IntPtr.Zero;
+            }
+        }
+
+        // 2b. Block copy / paste shortcuts (Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+Insert, Shift+Insert) at window message level
+        if (!_config.Security.AllowCopyPaste && (msg == WM_KEYDOWN_MSG || msg == WM_KEYUP_MSG))
+        {
+            int vk = wParam.ToInt32();
+            bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
+            bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
+
+            if (ctrl && (vk == 0x43 || vk == 0x56 || vk == 0x58 || vk == 0x2D)) // C, V, X, Insert
+            {
+                handled = true;
+                return IntPtr.Zero;
+            }
+
+            if (shift && vk == 0x2D) // Shift + Insert
             {
                 handled = true;
                 return IntPtr.Zero;
