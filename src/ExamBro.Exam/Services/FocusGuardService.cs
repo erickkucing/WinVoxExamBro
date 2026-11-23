@@ -366,6 +366,9 @@ public class FocusGuardService : IDisposable
         uint dwEventThread,
         uint dwmsEventTime)
     {
+        if (_suspended || _disposed)
+            return;
+
         if (eventType == EVENT_SYSTEM_DESKTOPSWITCH)
         {
             Log.Warning("Desktop switch detected (e.g. Winlogon / SAS)!");
@@ -564,13 +567,19 @@ public class FocusGuardService : IDisposable
         catch { }
     }
 
+    private static int _isDismissingSas;
+
     /// <summary>
     /// Instantly dismisses the Winlogon SAS screen (Ctrl+Alt+Del) by attaching a SYSTEM-level
     /// worker thread to the Winlogon desktop and injecting VK_ESCAPE, then switching back to Default.
+    /// Guarded against re-entrancy so the 100ms watcher never spawns concurrent worker threads.
     /// </summary>
     public static void DismissWinlogonSas()
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return;
+
+        if (Interlocked.CompareExchange(ref _isDismissingSas, 1, 0) != 0)
             return;
 
         // Dedicated worker thread prevents ERROR_BUSY on SetThreadDesktop caused by GUI windows
@@ -643,6 +652,7 @@ public class FocusGuardService : IDisposable
                 {
                     CloseHandle(hDupToken);
                 }
+                Interlocked.Exchange(ref _isDismissingSas, 0);
             }
         })
         {
@@ -661,12 +671,13 @@ public class FocusGuardService : IDisposable
 
             int currentSessionId = Process.GetCurrentProcess().SessionId;
             var winlogonProcesses = Process.GetProcessesByName("winlogon");
+            IntPtr duplicatedToken = IntPtr.Zero;
 
             foreach (var proc in winlogonProcesses)
             {
                 try
                 {
-                    if (proc.SessionId == currentSessionId)
+                    if (duplicatedToken == IntPtr.Zero && proc.SessionId == currentSessionId)
                     {
                         IntPtr hProc = OpenProcess(PROCESS_QUERY_INFORMATION, false, proc.Id);
                         if (hProc != IntPtr.Zero)
@@ -681,10 +692,9 @@ public class FocusGuardService : IDisposable
                                     TokenTypeImpersonation,
                                     out IntPtr hDup);
                                 CloseHandle(hToken);
-                                CloseHandle(hProc);
                                 if (dupSuccess)
                                 {
-                                    return hDup;
+                                    duplicatedToken = hDup;
                                 }
                             }
                             CloseHandle(hProc);
@@ -692,7 +702,13 @@ public class FocusGuardService : IDisposable
                     }
                 }
                 catch { }
+                finally
+                {
+                    proc.Dispose();
+                }
             }
+
+            return duplicatedToken;
         }
         catch (Exception ex)
         {

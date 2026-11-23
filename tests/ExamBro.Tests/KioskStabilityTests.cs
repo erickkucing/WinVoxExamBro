@@ -321,4 +321,103 @@ public class KioskStabilityTests
         Assert.Equal(0, restored.OriginalRegistryValues[hkcuCtrlCenter]);
         Assert.Null(restored.OriginalRegistryValues[hklmCtrlCenter]);
     }
+
+    [Fact]
+    public void AtomicFileWriter_WritesAndOverwritesFlushed_LeavesNoTempFiles()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"exambro_atomic_test_{Guid.NewGuid():N}");
+        string targetFile = Path.Combine(tempDir, "exambro.cfg");
+        try
+        {
+            AtomicFileWriter.WriteAllTextFlushed(targetFile, "initial_payload");
+            Assert.True(File.Exists(targetFile));
+            Assert.Equal("initial_payload", File.ReadAllText(targetFile));
+
+            AtomicFileWriter.WriteAllTextFlushed(targetFile, "updated_payload_after_flush");
+            Assert.Equal("updated_payload_after_flush", File.ReadAllText(targetFile));
+
+            var tmpFiles = Directory.GetFiles(tempDir, "*.tmp");
+            Assert.Empty(tmpFiles);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void RecoveryState_UserSidAndHivePath_RoundtripSerialization()
+    {
+        string tempFile = Path.Combine(Path.GetTempPath(), $"exambro_sid_test_{Guid.NewGuid():N}.json");
+        try
+        {
+            var state = new ExamBro.Core.Recovery.RecoveryState
+            {
+                UserSid = "S-1-5-21-3623811015-3361044348-30300820-1013",
+                UserHivePath = @"C:\Users\Student01\NTUSER.DAT",
+                OriginalWekfCtrlAltDelEnabled = false,
+                OriginalWekfDisableForAdminValue = "true"
+            };
+            state.OriginalRegistryValues[$@"HKLM\{Constants.ExplorerPolicySubKey}\NoClose"] = null;
+            state.OriginalRegistryValues[$@"HKCU\{Constants.ExplorerPolicySubKey}\NoClose"] = null;
+
+            state.Save(tempFile);
+            var loaded = ExamBro.Core.Recovery.RecoveryState.Load(tempFile);
+
+            Assert.NotNull(loaded);
+            Assert.Equal("S-1-5-21-3623811015-3361044348-30300820-1013", loaded.UserSid);
+            Assert.Equal(@"C:\Users\Student01\NTUSER.DAT", loaded.UserHivePath);
+            Assert.True(loaded.OriginalRegistryValues.ContainsKey($@"HKLM\{Constants.ExplorerPolicySubKey}\NoClose"));
+            Assert.Null(loaded.OriginalRegistryValues[$@"HKLM\{Constants.ExplorerPolicySubKey}\NoClose"]);
+        }
+        finally
+        {
+            ExamBro.Core.Recovery.RecoveryState.ClearRecoveryFile(tempFile);
+        }
+    }
+
+    [Fact]
+    public void RecoveryState_BuildPowerShellRecoveryScript_ContainsCompleteBootAndLogonRemediation()
+    {
+        var state = new ExamBro.Core.Recovery.RecoveryState
+        {
+            UserSid = "S-1-5-21-111-222-333-1001",
+            UserHivePath = @"C:\Users\Peserta\NTUSER.DAT",
+            OriginalWekfCtrlAltDelEnabled = false,
+            OriginalWekfDisableForAdminValue = "true",
+            OriginalWekfForceOffAccessibilityValue = "false"
+        };
+        state.OriginalRegistryValues[$@"HKLM\{Constants.ExplorerPolicySubKey}\NoClose"] = null;
+        state.OriginalRegistryValues[$@"HKCU\{Constants.ExplorerPolicySubKey}\NoLogoff"] = 0;
+
+        string script = state.BuildPowerShellRecoveryScript();
+
+        Assert.Contains("NoClose", script);
+        Assert.Contains("NoLogoff", script);
+        Assert.Contains("DisableTaskMgr", script);
+        Assert.Contains("S-1-5-21-111-222-333-1001", script);
+        Assert.Contains(@"C:\Users\Peserta\NTUSER.DAT", script);
+        Assert.Contains("reg.exe load 'HKU\\ExamBroRecoveryHive'", script);
+        Assert.Contains("reg.exe unload 'HKU\\ExamBroRecoveryHive'", script);
+        Assert.Contains("Image File Execution Options\\DisplaySwitch.exe", script);
+        Assert.Contains("WEKF_PredefinedKey", script);
+        Assert.Contains("DisableKeyboardFilterForAdministrators", script);
+        Assert.Contains("schtasks.exe /Delete /TN", script);
+    }
+
+    [Fact]
+    public void RecoveryState_BuildScheduledTaskXml_ContainsBootAndLogonTriggersUnderSystemSid()
+    {
+        string xml = ExamBro.Core.Recovery.RecoveryState.BuildScheduledTaskXml(@"C:\ProgramData\LouisVox ExamBro\recovery\restore-kiosk.ps1");
+
+        Assert.Contains("<BootTrigger>", xml);
+        Assert.Contains("<LogonTrigger>", xml);
+        Assert.Contains("<UserId>S-1-5-18</UserId>", xml);
+        Assert.Contains("<RunLevel>HighestAvailable</RunLevel>", xml);
+        Assert.Contains("<Command>powershell.exe</Command>", xml);
+        Assert.Contains("restore-kiosk.ps1", xml);
+    }
 }

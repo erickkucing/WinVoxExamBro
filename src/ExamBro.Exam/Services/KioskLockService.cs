@@ -1,10 +1,13 @@
 using System.Diagnostics;
+using System.IO;
 using System.Management;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32;
 using ExamBro.Core;
 using ExamBro.Core.Models;
 using ExamBro.Core.Recovery;
+using ExamBro.Core.Security;
 using Serilog;
 
 namespace ExamBro.Exam.Services;
@@ -137,8 +140,9 @@ public class KioskLockService : IDisposable
     // Public Engagement & Disengagement
 
     /// <summary>
-    /// Engages full kiosk lockdown: hides taskbars, writes registry lockdown policies,
-    /// and suppresses accessibility hotkeys. Persists recovery state to disk.
+    /// Engages full kiosk lockdown: records user SID and pre-exam policy values, registers
+    /// the self-contained boot/logon recovery scheduled task, hides taskbars, writes registry
+    /// lockdown policies, and suppresses accessibility hotkeys.
     /// </summary>
     public void Engage(ExamConfig config)
     {
@@ -152,6 +156,15 @@ public class KioskLockService : IDisposable
 
         try
         {
+            // 0. Capture user SID/hive, pre-record original registry values, flush recovery journal,
+            //    and register the boot/logon scheduled task BEFORE applying any system lockdown.
+            CaptureCurrentUserInfo();
+            if (config.Security.DisableRegistryPolicies)
+            {
+                CaptureOriginalRegistryValues();
+            }
+            PersistRecoverySnapshotAndTask();
+
             // 1. Hide primary and secondary taskbars
             HideTaskbar();
 
@@ -170,8 +183,8 @@ public class KioskLockService : IDisposable
                 KillExplorer();
             }
 
-            // 5. Persist recovery state to disk
-            _recovery.Save();
+            // 5. Re-persist recovery state and script with final WEKF/accessibility/explorer flags
+            PersistRecoverySnapshotAndTask(registerTask: false);
             _engaged = true;
 
             Log.Information("Kiosk lockdown successfully engaged");
@@ -186,7 +199,8 @@ public class KioskLockService : IDisposable
 
     /// <summary>
     /// Disengages kiosk lockdown: restores taskbars, reverts registry policies,
-    /// re-enables accessibility hotkeys, and deletes the recovery state file.
+    /// re-enables accessibility hotkeys, removes the boot recovery scheduled task,
+    /// and deletes the recovery state files.
     /// </summary>
     public void Disengage()
     {
@@ -214,7 +228,8 @@ public class KioskLockService : IDisposable
                 RestartExplorer();
             }
 
-            // 5. Delete recovery state file
+            // 5. Remove boot recovery scheduled task and delete recovery state files
+            UnregisterEmergencyRecoveryTask();
             RecoveryState.ClearRecoveryFile();
             _engaged = false;
 
@@ -223,6 +238,167 @@ public class KioskLockService : IDisposable
         catch (Exception ex)
         {
             Log.Error(ex, "Error occurred while disengaging kiosk lockdown");
+        }
+    }
+
+    private void CaptureCurrentUserInfo()
+    {
+        try
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+                _recovery.UserSid = identity.User?.Value;
+            }
+
+            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrWhiteSpace(userProfile))
+            {
+                string ntUserDat = Path.Combine(userProfile, "NTUSER.DAT");
+                _recovery.UserHivePath = ntUserDat;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to capture current user SID or NTUSER.DAT path");
+        }
+    }
+
+    private void CaptureOriginalRegistryValues()
+    {
+        foreach (bool useHklm in new[] { false, true })
+        {
+            foreach (string name in SystemPolicyValueNames)
+            {
+                CaptureSingleOriginalValue(Constants.SystemPolicySubKey, name, useHklm);
+            }
+            foreach (string name in ExplorerPolicyValueNames)
+            {
+                CaptureSingleOriginalValue(Constants.ExplorerPolicySubKey, name, useHklm);
+            }
+            foreach (string name in GroupPolicyExplorerValueNames)
+            {
+                CaptureSingleOriginalValue(Constants.GroupPolicyExplorerSubKey, name, useHklm);
+            }
+        }
+        CaptureSingleOriginalValue(@"Control Panel\Desktop", "LowLevelHooksTimeout", useHklm: false);
+    }
+
+    private void CaptureSingleOriginalValue(string subKey, string valueName, bool useHklm)
+    {
+        string rootPrefix = useHklm ? "HKLM" : "HKCU";
+        string fullPath = $@"{rootPrefix}\{subKey}\{valueName}";
+        if (!_recovery.OriginalRegistryValues.ContainsKey(fullPath))
+        {
+            _recovery.OriginalRegistryValues[fullPath] = GetRegistryValue(subKey, valueName, useHklm);
+        }
+    }
+
+    private void PersistRecoverySnapshotAndTask(bool registerTask = true)
+    {
+        try
+        {
+            _recovery.Save();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to save recovery state JSON");
+        }
+
+        try
+        {
+            string scriptContent = _recovery.BuildPowerShellRecoveryScript();
+            AtomicFileWriter.WriteAllTextFlushed(Constants.SystemRecoveryScriptPath, scriptContent);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to write self-contained PowerShell recovery script to {Path}", Constants.SystemRecoveryScriptPath);
+        }
+
+        if (registerTask)
+        {
+            RegisterEmergencyRecoveryTask();
+        }
+    }
+
+    private static void RegisterEmergencyRecoveryTask()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return;
+
+        string tempXmlPath = Path.Combine(Path.GetTempPath(), $"exambro_task_{Guid.NewGuid():N}.xml");
+        try
+        {
+            string xmlContent = RecoveryState.BuildScheduledTaskXml(Constants.SystemRecoveryScriptPath);
+            File.WriteAllText(tempXmlPath, xmlContent, Encoding.Unicode);
+
+            using var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = "schtasks.exe",
+                Arguments = $"/Create /TN \"{Constants.RecoveryScheduledTaskName}\" /XML \"{tempXmlPath}\" /F",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            });
+
+            if (proc != null)
+            {
+                proc.WaitForExit(4000);
+                if (proc.ExitCode == 0)
+                {
+                    Log.Information("Registered boot/logon recovery Scheduled Task: {TaskName}", Constants.RecoveryScheduledTaskName);
+                    return;
+                }
+            }
+
+            // Fallback registration using command-line triggers if XML import was rejected
+            string psArgs = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File \\\"{Constants.SystemRecoveryScriptPath}\\\"";
+            using var fallbackProc = Process.Start(new ProcessStartInfo
+            {
+                FileName = "schtasks.exe",
+                Arguments = $"/Create /TN \"{Constants.RecoveryScheduledTaskName}\" /TR \"powershell.exe {psArgs}\" /SC ONSTART /RU SYSTEM /RL HIGHEST /F",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+            fallbackProc?.WaitForExit(3000);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to register emergency recovery Scheduled Task");
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempXmlPath))
+                    File.Delete(tempXmlPath);
+            }
+            catch { }
+        }
+    }
+
+    private static void UnregisterEmergencyRecoveryTask()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return;
+
+        try
+        {
+            using var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = "schtasks.exe",
+                Arguments = $"/Delete /TN \"{Constants.RecoveryScheduledTaskName}\" /F",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            });
+            proc?.WaitForExit(3000);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Failed to unregister emergency recovery Scheduled Task");
         }
     }
 
@@ -274,6 +450,42 @@ public class KioskLockService : IDisposable
     }
 
     // Registry Policy Helpers
+
+    private static readonly string[] SystemPolicyValueNames =
+    {
+        "DisableTaskMgr",
+        "DisableLockWorkstation",
+        "DisableChangePassword",
+        "HideFastUserSwitching",
+        "NoDispCPL"
+    };
+
+    private static readonly string[] ExplorerPolicyValueNames =
+    {
+        "NoLogoff",
+        "NoClose",
+        "DisableNotificationCenter",
+        "DisableNotificationCenterIcon",
+        "HideNotificationCenterIcon",
+        "DisableControlCenter",
+        "HideControlCenter",
+        "DisableQuickSettings",
+        "NoControlCenter",
+        "NoWindowsInkWorkspace",
+        "NoWinKeys"
+    };
+
+    private static readonly string[] GroupPolicyExplorerValueNames =
+    {
+        "DisableNotificationCenter",
+        "DisableNotificationCenterIcon",
+        "HideNotificationCenterIcon",
+        "DisableControlCenter",
+        "HideControlCenter",
+        "DisableQuickSettings",
+        "NoControlCenter",
+        "NoWinKeys"
+    };
 
     private void ApplyRegistryPolicies()
     {
@@ -773,6 +985,7 @@ public class KioskLockService : IDisposable
                 foreach (var p in explorerProcesses)
                 {
                     try { p.Kill(); } catch { /* best effort */ }
+                    finally { p.Dispose(); }
                 }
                 _recovery.ExplorerWasKilled = true;
             }
@@ -788,7 +1001,13 @@ public class KioskLockService : IDisposable
         try
         {
             var running = Process.GetProcessesByName("explorer");
-            if (running.Length == 0)
+            bool isRunning = running.Length > 0;
+            foreach (var p in running)
+            {
+                p.Dispose();
+            }
+
+            if (!isRunning && Environment.UserInteractive)
             {
                 Process.Start(new ProcessStartInfo
                 {
@@ -806,6 +1025,51 @@ public class KioskLockService : IDisposable
     // Static Recovery Method
 
     /// <summary>
+    /// Checks whether the system has either a recovery journal file OR residual kiosk lockdown
+    /// policies left over in the Windows Registry after a hard power-off (even if recovery.json was lost).
+    /// </summary>
+    public static bool HasResidualLockdownState()
+    {
+        if (RecoveryState.NeedsRecovery())
+        {
+            return true;
+        }
+
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return false;
+        }
+
+        try
+        {
+            foreach (bool useHklm in new[] { false, true })
+            {
+                if (GetRegistryValue(Constants.ExplorerPolicySubKey, "NoClose", useHklm) == 1 ||
+                    GetRegistryValue(Constants.ExplorerPolicySubKey, "NoLogoff", useHklm) == 1 ||
+                    GetRegistryValue(Constants.SystemPolicySubKey, "DisableTaskMgr", useHklm) == 1)
+                {
+                    return true;
+                }
+            }
+
+            using var ifeoKey = Registry.LocalMachine.OpenSubKey(
+                @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\DisplaySwitch.exe");
+            string? debugger = ifeoKey?.GetValue("Debugger")?.ToString();
+            if (!string.IsNullOrEmpty(debugger) &&
+                debugger.Contains("systray.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Error checking for residual lockdown registry keys");
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Restores system state after an ungraceful shutdown or crash using the persisted
     /// <see cref="RecoveryState"/>, or performs a safe fallback restore if the file is missing.
     /// </summary>
@@ -821,7 +1085,32 @@ public class KioskLockService : IDisposable
             // 1. Show taskbars
             ShowTaskbar();
 
-            // 2. Revert registry policies
+            // 2. Always perform baseline cleanup of all known lockdown policy keys first
+            //    so that even a partial/interrupted lockdown leaves zero NoClose/NoLogoff keys behind
+            foreach (bool useHklm in new[] { false, true })
+            {
+                foreach (string name in SystemPolicyValueNames)
+                {
+                    DeleteRegistryValue(Constants.SystemPolicySubKey, name, useHklm);
+                }
+                foreach (string name in ExplorerPolicyValueNames)
+                {
+                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, name, useHklm);
+                }
+                foreach (string name in GroupPolicyExplorerValueNames)
+                {
+                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, name, useHklm);
+                }
+            }
+            DeleteRegistryValue(@"Control Panel\Desktop", "LowLevelHooksTimeout", useHklm: false);
+
+            // Also clean the recorded user SID hive under HKEY_USERS (crucial when running as SYSTEM)
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !string.IsNullOrWhiteSpace(state?.UserSid))
+            {
+                CleanupUserSidHivePolicies(state.UserSid);
+            }
+
+            // 2b. Re-apply any pre-existing non-null original registry values recorded before lockdown
             if (state != null && state.OriginalRegistryValues.Any())
             {
                 foreach (var entry in state.OriginalRegistryValues)
@@ -856,54 +1145,27 @@ public class KioskLockService : IDisposable
                     }
                 }
             }
-            else
-            {
-                // Fallback registry cleanup: delete known lockout values from both HKCU and HKLM
-                foreach (bool useHklm in new[] { false, true })
-                {
-                    DeleteRegistryValue(Constants.SystemPolicySubKey, "DisableTaskMgr", useHklm);
-                    DeleteRegistryValue(Constants.SystemPolicySubKey, "DisableLockWorkstation", useHklm);
-                    DeleteRegistryValue(Constants.SystemPolicySubKey, "DisableChangePassword", useHklm);
-                    DeleteRegistryValue(Constants.SystemPolicySubKey, "HideFastUserSwitching", useHklm);
-                    DeleteRegistryValue(Constants.SystemPolicySubKey, "NoDispCPL", useHklm);
-                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoLogoff", useHklm);
-                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoClose", useHklm);
-                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "DisableNotificationCenter", useHklm);
-                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "DisableNotificationCenterIcon", useHklm);
-                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "HideNotificationCenterIcon", useHklm);
-                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "DisableControlCenter", useHklm);
-                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "HideControlCenter", useHklm);
-                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "DisableQuickSettings", useHklm);
-                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoControlCenter", useHklm);
-                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoWindowsInkWorkspace", useHklm);
-                    DeleteRegistryValue(Constants.ExplorerPolicySubKey, "NoWinKeys", useHklm);
-                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "DisableNotificationCenter", useHklm);
-                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "DisableNotificationCenterIcon", useHklm);
-                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "HideNotificationCenterIcon", useHklm);
-                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "DisableControlCenter", useHklm);
-                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "HideControlCenter", useHklm);
-                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "DisableQuickSettings", useHklm);
-                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "NoControlCenter", useHklm);
-                    DeleteRegistryValue(Constants.GroupPolicyExplorerSubKey, "NoWinKeys", useHklm);
-                }
-                DeleteRegistryValue(@"Control Panel\Desktop", "LowLevelHooksTimeout", useHklm: false);
-            }
 
             DeleteRegistrySubKeyTree(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\DisplaySwitch.exe", useHklm: true);
-
 
             // 3. Re-enable accessibility hotkeys
             try
             {
-                uint skFlags = state?.OriginalStickyKeysFlags ?? (SKF_HOTKEYACTIVE | SKF_CONFIRMHOTKEY);
+                uint skFlags = (state != null && state.OriginalStickyKeysFlags != 0)
+                    ? state.OriginalStickyKeysFlags
+                    : (SKF_HOTKEYACTIVE | SKF_CONFIRMHOTKEY);
                 var sk = new STICKYKEYS { cbSize = (uint)Marshal.SizeOf<STICKYKEYS>(), dwFlags = skFlags };
                 SystemParametersInfo(SPI_SETSTICKYKEYS, sk.cbSize, ref sk, SPIF_SENDCHANGE);
 
-                uint fkFlags = state?.OriginalFilterKeysFlags ?? (FKF_HOTKEYACTIVE | FKF_CONFIRMHOTKEY);
+                uint fkFlags = (state != null && state.OriginalFilterKeysFlags != 0)
+                    ? state.OriginalFilterKeysFlags
+                    : (FKF_HOTKEYACTIVE | FKF_CONFIRMHOTKEY);
                 var fk = new FILTERKEYS { cbSize = (uint)Marshal.SizeOf<FILTERKEYS>(), dwFlags = fkFlags };
                 SystemParametersInfo(SPI_SETFILTERKEYS, fk.cbSize, ref fk, SPIF_SENDCHANGE);
 
-                uint tkFlags = state?.OriginalToggleKeysFlags ?? (TKF_HOTKEYACTIVE | TKF_CONFIRMHOTKEY);
+                uint tkFlags = (state != null && state.OriginalToggleKeysFlags != 0)
+                    ? state.OriginalToggleKeysFlags
+                    : (TKF_HOTKEYACTIVE | TKF_CONFIRMHOTKEY);
                 var tk = new TOGGLEKEYS { cbSize = (uint)Marshal.SizeOf<TOGGLEKEYS>(), dwFlags = tkFlags };
                 SystemParametersInfo(SPI_SETTOGGLEKEYS, tk.cbSize, ref tk, SPIF_SENDCHANGE);
             }
@@ -913,7 +1175,11 @@ public class KioskLockService : IDisposable
             }
 
             // 4. Restart explorer if needed
-            if (state?.ExplorerWasKilled == true || Process.GetProcessesByName("explorer").Length == 0)
+            var explorerProcs = Process.GetProcessesByName("explorer");
+            bool explorerRunning = explorerProcs.Length > 0;
+            foreach (var ep in explorerProcs) ep.Dispose();
+
+            if (state?.ExplorerWasKilled == true || !explorerRunning)
             {
                 RestartExplorer();
             }
@@ -921,7 +1187,8 @@ public class KioskLockService : IDisposable
             // 5. Restore Keyboard Filter (WEKF)
             RestoreKeyboardFilterStatic(state, log);
 
-            // 6. Clear recovery file
+            // 6. Unregister boot recovery scheduled task and clear recovery files
+            UnregisterEmergencyRecoveryTask();
             RecoveryState.ClearRecoveryFile();
             log.Information("System state successfully restored");
         }
@@ -929,6 +1196,37 @@ public class KioskLockService : IDisposable
         {
             log.Error(ex, "Critical error during RestoreFromRecovery");
         }
+    }
+
+    private static void CleanupUserSidHivePolicies(string userSid)
+    {
+        try
+        {
+            foreach (string name in SystemPolicyValueNames)
+            {
+                DeleteUsersRegistryValue($@"{userSid}\{Constants.SystemPolicySubKey}", name);
+            }
+            foreach (string name in ExplorerPolicyValueNames)
+            {
+                DeleteUsersRegistryValue($@"{userSid}\{Constants.ExplorerPolicySubKey}", name);
+            }
+            foreach (string name in GroupPolicyExplorerValueNames)
+            {
+                DeleteUsersRegistryValue($@"{userSid}\{Constants.GroupPolicyExplorerSubKey}", name);
+            }
+            DeleteUsersRegistryValue($@"{userSid}\Control Panel\Desktop", "LowLevelHooksTimeout");
+        }
+        catch { }
+    }
+
+    private static void DeleteUsersRegistryValue(string subKeyUnderUsers, string valueName)
+    {
+        try
+        {
+            using var key = Registry.Users.OpenSubKey(subKeyUnderUsers, writable: true);
+            key?.DeleteValue(valueName, throwOnMissingValue: false);
+        }
+        catch { }
     }
 
     // IDisposable

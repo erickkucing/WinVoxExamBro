@@ -299,9 +299,12 @@ public class KeyboardHookService : IDisposable
                 // Check Exit Shortcut (Proctor Exit) - only trigger on KeyDown
                 if (isKeyDown && CheckExitShortcut(vkCode, ctrlDown, shiftDown, altDown))
                 {
-                    Log.Information("Exit shortcut triggered by user");
-                    ExitShortcutRequested?.Invoke();
-                    return (IntPtr)1; // Consume key
+                    ThreadPool.QueueUserWorkItem(_ =>
+                    {
+                        Log.Information("Exit shortcut triggered by user");
+                        ExitShortcutRequested?.Invoke();
+                    });
+                    return (IntPtr)1; // Consume key immediately so WH_KEYBOARD_LL never blocks on modal dialog
                 }
 
                 // Keyboard Policy Evaluation

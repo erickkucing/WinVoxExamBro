@@ -154,5 +154,19 @@ public class UrlMatcherTests
         Assert.True(UrlMatcher.IsUrlAllowed("http://192.168.1.50:8080/cbt", allowed, blocked));
         Assert.False(UrlMatcher.IsUrlAllowed("http://10.10.10.10:8006", allowed, blocked));
         Assert.False(UrlMatcher.IsUrlAllowed("https://exam.external.com", allowed, blocked));
+        Assert.False(UrlMatcher.IsUrlAllowed("https://evil.com/?q=http://192.168.70.9/login", allowed, blocked));
+    }
+
+    [Fact]
+    public void IsUrlAllowed_SchemeWildcardPattern_PreventsExternalQueryRedirectBypass()
+    {
+        var allowed = new List<string> { "*://192.168.70.9/*", "*://localhost:8000/*" };
+        var blocked = new List<string>();
+
+        Assert.True(UrlMatcher.IsUrlAllowed("http://192.168.70.9/login", allowed, blocked));
+        Assert.True(UrlMatcher.IsUrlAllowed("https://192.168.70.9/exam/workspace", allowed, blocked));
+        Assert.True(UrlMatcher.IsUrlAllowed("http://localhost:8000/siswa", allowed, blocked));
+        Assert.False(UrlMatcher.IsUrlAllowed("https://evil.com/?redirect=http://192.168.70.9/login", allowed, blocked));
+        Assert.False(UrlMatcher.IsUrlAllowed("https://google.com/search?q=http://localhost:8000/", allowed, blocked));
     }
 }

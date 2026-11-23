@@ -132,13 +132,27 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   LocalAppExamBroDir: String;
+  LocalAppLouisVoxDir: String;
+  CommonRecoveryDir: String;
+  ResultCode: Integer;
 begin
   if CurUninstallStep = usPostUninstall then
   begin
+    Exec('schtasks.exe', '/Delete /TN "LouisVoxExamBro_EmergencyRecovery" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     LocalAppExamBroDir := ExpandConstant('{localappdata}\ExamBro');
     if DirExists(LocalAppExamBroDir) then
     begin
       DelTree(LocalAppExamBroDir, True, True, True);
+    end;
+    LocalAppLouisVoxDir := ExpandConstant('{localappdata}\LouisVox ExamBro');
+    if DirExists(LocalAppLouisVoxDir) then
+    begin
+      DelTree(LocalAppLouisVoxDir, True, True, True);
+    end;
+    CommonRecoveryDir := ExpandConstant('{commonappdata}\LouisVox ExamBro\recovery');
+    if DirExists(CommonRecoveryDir) then
+    begin
+      DelTree(CommonRecoveryDir, True, True, True);
     end;
   end;
 end;

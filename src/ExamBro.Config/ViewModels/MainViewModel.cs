@@ -484,14 +484,14 @@ public partial class MainViewModel : ObservableObject
             }
 
             byte[] encrypted = ConfigEncryption.EncryptPortableConfig(config);
-            File.WriteAllBytes(portableFile, encrypted);
+            AtomicFileWriter.WriteAllBytesFlushed(portableFile, encrypted);
 
             if (!string.IsNullOrEmpty(directory))
             {
                 byte[] logoBytes = BrandingHelper.ResolveLogoBytes(config.General.LogoBase64, config.General.LogoPath);
                 if (logoBytes.Length > 0)
                 {
-                    try { File.WriteAllBytes(Path.Combine(directory, "logo.png"), logoBytes); } catch { }
+                    try { AtomicFileWriter.WriteAllBytesFlushed(Path.Combine(directory, "logo.png"), logoBytes); } catch { }
                 }
             }
 
@@ -502,12 +502,7 @@ public partial class MainViewModel : ObservableObject
             try
             {
                 string sysFile = Constants.SystemConfigFilePath;
-                string? sysDir = Path.GetDirectoryName(sysFile);
-                if (!string.IsNullOrEmpty(sysDir) && !Directory.Exists(sysDir))
-                {
-                    Directory.CreateDirectory(sysDir);
-                }
-                File.WriteAllBytes(sysFile, encrypted);
+                AtomicFileWriter.WriteAllBytesFlushed(sysFile, encrypted);
             }
             catch (Exception ex)
             {
@@ -576,14 +571,14 @@ public partial class MainViewModel : ObservableObject
             }
 
             byte[] encrypted = ConfigEncryption.EncryptPortableConfig(config);
-            File.WriteAllBytes(targetFile, encrypted);
+            AtomicFileWriter.WriteAllBytesFlushed(targetFile, encrypted);
 
             if (!string.IsNullOrEmpty(pDir))
             {
                 byte[] logoBytes = BrandingHelper.ResolveLogoBytes(config.General.LogoBase64, config.General.LogoPath);
                 if (logoBytes.Length > 0)
                 {
-                    try { File.WriteAllBytes(Path.Combine(pDir, "logo.png"), logoBytes); } catch { }
+                    try { AtomicFileWriter.WriteAllBytesFlushed(Path.Combine(pDir, "logo.png"), logoBytes); } catch { }
                 }
             }
 
@@ -594,12 +589,7 @@ public partial class MainViewModel : ObservableObject
             try
             {
                 string sysFile = Constants.SystemConfigFilePath;
-                string? sysDir = Path.GetDirectoryName(sysFile);
-                if (!string.IsNullOrEmpty(sysDir) && !Directory.Exists(sysDir))
-                {
-                    Directory.CreateDirectory(sysDir);
-                }
-                File.WriteAllBytes(sysFile, encrypted);
+                AtomicFileWriter.WriteAllBytesFlushed(sysFile, encrypted);
             }
             catch (Exception ex)
             {
@@ -657,12 +647,12 @@ public partial class MainViewModel : ObservableObject
                     try
                     {
                         string targetCfg = Path.Combine(folder, "exambro.cfg");
-                        File.WriteAllBytes(targetCfg, encryptedBytes);
+                        AtomicFileWriter.WriteAllBytesFlushed(targetCfg, encryptedBytes);
                         Log.Information("Sinkronisasi konfigurasi ke folder terkait: {Folder}", folder);
 
                         if (logoBytes.Length > 0)
                         {
-                            try { File.WriteAllBytes(Path.Combine(folder, "logo.png"), logoBytes); } catch { }
+                            try { AtomicFileWriter.WriteAllBytesFlushed(Path.Combine(folder, "logo.png"), logoBytes); } catch { }
                         }
                     }
                     catch (Exception ex)

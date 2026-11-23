@@ -283,15 +283,18 @@ public static class ConfigEncryption
         if (File.Exists(path))
         {
             byte[] encrypted = File.ReadAllBytes(path);
-            // ProtectedData.Unprotect with LocalMachine scope + entropy.
-            // This will throw CryptographicException if the machine or entropy differ.
-            return System.Security.Cryptography.ProtectedData.Unprotect(
-                encrypted,
-                entropy,
-                DataProtectionScope.LocalMachine);
+            if (encrypted.Length > 0)
+            {
+                // ProtectedData.Unprotect with LocalMachine scope + entropy.
+                // This will throw CryptographicException if the machine or entropy differ.
+                return System.Security.Cryptography.ProtectedData.Unprotect(
+                    encrypted,
+                    entropy,
+                    DataProtectionScope.LocalMachine);
+            }
         }
 
-        // First run: generate a fresh 256-bit key
+        // First run (or zero-byte file after power cut): generate a fresh 256-bit key
         byte[] newKey = new byte[Constants.KeyLength];
         RandomNumberGenerator.Fill(newKey);
 
@@ -300,7 +303,7 @@ public static class ConfigEncryption
             entropy,
             DataProtectionScope.LocalMachine);
 
-        File.WriteAllBytes(path, protectedKey);
+        AtomicFileWriter.WriteAllBytesFlushed(path, protectedKey);
         return newKey;
     }
 

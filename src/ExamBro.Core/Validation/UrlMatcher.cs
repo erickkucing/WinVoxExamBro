@@ -33,18 +33,39 @@ public static class UrlMatcher
         {
             if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
             {
-                if (uri.Host.StartsWith("192.168.", StringComparison.OrdinalIgnoreCase))
-                    return true;
+                return uri.Host.StartsWith("192.168.", StringComparison.OrdinalIgnoreCase);
             }
-            if (url.Contains("://192.168.", StringComparison.OrdinalIgnoreCase) ||
-                url.StartsWith("192.168.", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
+            return url.StartsWith("192.168.", StringComparison.OrdinalIgnoreCase);
         }
 
         // Standard glob matching (* -> .*)
         string escaped = Regex.Escape(trimmedPattern).Replace(@"\*", ".*");
+
+        // Prevent scheme/host wildcards from crossing authority/path/query boundaries
+        int schemeSep = escaped.IndexOf("://", StringComparison.Ordinal);
+        if (schemeSep >= 0)
+        {
+            string schemePart = escaped[..schemeSep];
+            if (schemePart == ".*")
+            {
+                schemePart = "[a-zA-Z][a-zA-Z0-9+.-]*";
+            }
+
+            string rest = escaped[(schemeSep + 3)..];
+            int firstSlash = rest.IndexOf('/');
+            if (firstSlash >= 0)
+            {
+                string hostPart = rest[..firstSlash].Replace(".*", @"[^/?#@]*");
+                string pathPart = rest[firstSlash..];
+                escaped = $"{schemePart}://{hostPart}{pathPart}";
+            }
+            else
+            {
+                string hostPart = rest.Replace(".*", @"[^/?#@]*");
+                escaped = $"{schemePart}://{hostPart}";
+            }
+        }
+
         string regexPattern = $"^{escaped}$";
 
         return Regex.IsMatch(url, regexPattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);

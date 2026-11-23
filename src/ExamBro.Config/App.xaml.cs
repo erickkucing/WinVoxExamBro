@@ -1,5 +1,6 @@
 using System.IO;
 using System.Security.Cryptography;
+using System.Text.Json;
 using System.Windows;
 using ExamBro.Config.Views;
 using ExamBro.Core;
@@ -35,26 +36,55 @@ public partial class App : Application
             Log.Information("Aplikasi ExamBro.Config dimulai");
 
             string configPath = Constants.ConfigFilePath;
+            var candidates = Constants.GetCandidateConfigPaths();
 
             // Scenario 1: First run - Config file does not exist
-            if (!File.Exists(configPath))
+            if (candidates.Count == 0)
             {
                 Log.Information("File konfigurasi tidak ditemukan di {Path}. Menjalankan SetupWizardDialog...", configPath);
                 RunFirstTimeSetup(configPath);
                 return;
             }
 
-            // Scenario 2: Config file exists - Attempt to decrypt and load
+            // Scenario 2: Config file exists - Attempt to decrypt and load (with backup fallback after hard power-off)
             ExamConfig? loadedConfig = null;
-            try
+            Exception? lastDecryptEx = null;
+
+            foreach (string candidatePath in candidates)
             {
-                byte[] encryptedData = File.ReadAllBytes(configPath);
-                loadedConfig = ConfigEncryption.DecryptConfig(encryptedData);
-                Log.Information("File konfigurasi berhasil didekripsi dari {Path}", configPath);
+                try
+                {
+                    byte[] encryptedData = File.ReadAllBytes(candidatePath);
+                    if (encryptedData.Length == 0)
+                    {
+                        Log.Warning("File konfigurasi di {Path} berukuran 0 byte. Mencoba kandidat cadangan...", candidatePath);
+                        continue;
+                    }
+
+                    loadedConfig = ConfigEncryption.DecryptConfig(encryptedData);
+                    Log.Information("File konfigurasi berhasil didekripsi dari {Path}", candidatePath);
+
+                    if (!candidatePath.Equals(Constants.PortableConfigPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            AtomicFileWriter.WriteAllBytesFlushed(Constants.PortableConfigPath, encryptedData);
+                            Log.Information("Memulihkan konfigurasi utama dari cadangan {BackupPath}", candidatePath);
+                        }
+                        catch { }
+                    }
+                    break;
+                }
+                catch (Exception ex) when (ex is CryptographicException || ex is IOException || ex is FormatException || ex is JsonException || ex is ArgumentException)
+                {
+                    lastDecryptEx = ex;
+                    Log.Warning(ex, "Gagal mendekripsi kandidat konfigurasi dari {Path}", candidatePath);
+                }
             }
-            catch (Exception ex) when (ex is CryptographicException || ex is IOException || ex is FormatException)
+
+            if (loadedConfig == null)
             {
-                Log.Error(ex, "File konfigurasi rusak atau gagal didekripsi dari {Path}", configPath);
+                Log.Error(lastDecryptEx, "Seluruh kandidat file konfigurasi rusak atau gagal didekripsi dari {Path}", configPath);
 
                 var promptResult = MessageBox.Show(
                     $"File konfigurasi di '{configPath}' rusak atau tidak dapat didekripsi.\n\n" +
@@ -165,7 +195,7 @@ public partial class App : Application
                 }
 
                 byte[] encrypted = ConfigEncryption.EncryptPortableConfig(wizard.Config);
-                File.WriteAllBytes(portablePath, encrypted);
+                AtomicFileWriter.WriteAllBytesFlushed(portablePath, encrypted);
                 Log.Information("Konfigurasi baru berhasil disimpan ke folder program: {Path}", portablePath);
 
                 // Sinkronisasi backup ke ProgramData
@@ -174,12 +204,7 @@ public partial class App : Application
                     string sysPath = Constants.SystemConfigFilePath;
                     if (!sysPath.Equals(portablePath, StringComparison.OrdinalIgnoreCase))
                     {
-                        string? sysDir = Path.GetDirectoryName(sysPath);
-                        if (!string.IsNullOrEmpty(sysDir) && !Directory.Exists(sysDir))
-                        {
-                            Directory.CreateDirectory(sysDir);
-                        }
-                        File.WriteAllBytes(sysPath, encrypted);
+                        AtomicFileWriter.WriteAllBytesFlushed(sysPath, encrypted);
                     }
                 }
                 catch (Exception sysEx)

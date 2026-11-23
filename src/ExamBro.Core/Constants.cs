@@ -152,6 +152,60 @@ public static class Constants
     /// <summary>Indicates whether the application is running in portable mode with local config.</summary>
     public static bool IsPortableMode => !ConfigFilePath.Equals(SystemConfigFilePath, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Returns all existing candidate configuration file paths in priority order.
+    /// Used as a resilient fallback chain if the primary file was truncated by a hard power-off.
+    /// </summary>
+    public static IReadOnlyList<string> GetCandidateConfigPaths()
+    {
+        var results = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void TryAdd(string? candidate)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate) && File.Exists(candidate) && seen.Add(candidate))
+            {
+                results.Add(candidate);
+            }
+        }
+
+        TryAdd(ConfigFilePath);
+        TryAdd(PortableConfigPath);
+        TryAdd(SystemConfigFilePath);
+
+        try
+        {
+            string? parentDir = Directory.GetParent(AppDirectory)?.FullName;
+            if (!string.IsNullOrEmpty(parentDir))
+            {
+                TryAdd(Path.Combine(parentDir, "exambro.cfg"));
+                TryAdd(Path.Combine(parentDir, "ExamBro.Config", "exambro.cfg"));
+                TryAdd(Path.Combine(parentDir, "ExamBro.Exam", "exambro.cfg"));
+                TryAdd(Path.Combine(parentDir, "portable", "WinVoxExamBro", "exambro.cfg"));
+            }
+        }
+        catch { }
+
+        return results;
+    }
+
+    /// <summary>Scheduled task name for automatic boot/logon recovery after hard power-off.</summary>
+    public const string RecoveryScheduledTaskName = "LouisVoxExamBro_EmergencyRecovery";
+
+    /// <summary>Machine-wide recovery directory under ProgramData accessible by SYSTEM at boot.</summary>
+    public static string SystemRecoveryDirectory =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            AppName, "recovery");
+
+    /// <summary>Machine-wide recovery state file under ProgramData.</summary>
+    public static string SystemRecoveryFilePath =>
+        Path.Combine(SystemRecoveryDirectory, "recovery.json");
+
+    /// <summary>Self-contained PowerShell recovery script executed by Scheduled Task at boot/logon.</summary>
+    public static string SystemRecoveryScriptPath =>
+        Path.Combine(SystemRecoveryDirectory, "restore-kiosk.ps1");
+
     /// <summary>Crash-recovery state file under LocalAppData.</summary>
     public static string RecoveryFilePath =>
         Path.Combine(

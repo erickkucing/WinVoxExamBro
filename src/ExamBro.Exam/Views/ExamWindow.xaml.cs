@@ -88,6 +88,11 @@ public partial class ExamWindow : Window
         var source = HwndSource.FromHwnd(_hwnd);
         source?.AddHook(WndProc);
 
+        if (Application.Current != null)
+        {
+            Application.Current.SessionEnding += OnApplicationSessionEnding;
+        }
+
         // 1. Resolve and prepare Start URL
         PrepareStartUrl();
 
@@ -152,24 +157,27 @@ public partial class ExamWindow : Window
         _violationManager = new ViolationManager(_config);
         _violationManager.ShowWarning += (type, msg, count) =>
         {
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(() =>
             {
+                if (_isClosingCleanly) return;
                 SetWebOverlayActive(true);
                 warningOverlay.ShowWarning(msg, count);
             });
         };
         _violationManager.ShowLockScreen += (type, reason) =>
         {
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(() =>
             {
+                if (_isClosingCleanly) return;
                 SetWebOverlayActive(true);
                 lockScreen.ShowLock(reason);
             });
         };
         _violationManager.RequestTerminate += (type, reason) =>
         {
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(() =>
             {
+                if (_isClosingCleanly) return;
                 Log.Warning("Session terminated by ViolationManager: {Reason}", reason);
                 CloseGracefully();
             });
@@ -190,13 +198,18 @@ public partial class ExamWindow : Window
             {
                 Dispatcher.BeginInvoke(() =>
                 {
+                    if (_isClosingCleanly) return;
                     _violationManager.RecordViolation(ViolationEventType.BlockedKey, desc);
                     NotifyWebAntiCheatViolation("window_blur", $"Kombinasi tombol terlarang: {desc}");
                 });
             };
             _keyboardHook.ExitShortcutRequested += () =>
             {
-                Dispatcher.Invoke(ShowExitConfirmation);
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (_isClosingCleanly) return;
+                    ShowExitConfirmation();
+                });
             };
             _keyboardHook.Start();
         }
@@ -207,8 +220,12 @@ public partial class ExamWindow : Window
             _focusGuard = new FocusGuardService();
             _focusGuard.DesktopSwitched += () =>
             {
-                _violationManager.RecordViolation(ViolationEventType.BlockedKey, "Kombinasi Ctrl + Alt + Delete (SAS Desktop Switch)");
-                NotifyWebAntiCheatViolation("window_blur", "Kombinasi tombol terlarang: Ctrl + Alt + Delete");
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (_isClosingCleanly) return;
+                    _violationManager.RecordViolation(ViolationEventType.BlockedKey, "Kombinasi Ctrl + Alt + Delete (SAS Desktop Switch)");
+                    NotifyWebAntiCheatViolation("window_blur", "Kombinasi tombol terlarang: Ctrl + Alt + Delete");
+                });
             };
             _focusGuard.FocusLost += () =>
             {
@@ -223,8 +240,9 @@ public partial class ExamWindow : Window
         _processMonitor = new ProcessMonitorService(_config);
         _processMonitor.BlockedProcessDetected += (name, pid) =>
         {
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(() =>
             {
+                if (_isClosingCleanly) return;
                 _violationManager.RecordViolation(ViolationEventType.BlockedProcess, $"{name} (PID: {pid})");
                 NotifyWebAntiCheatSevereViolation($"Aplikasi terlarang terdeteksi di Windows: {name} (PID: {pid})");
             });
@@ -266,16 +284,7 @@ public partial class ExamWindow : Window
         }
         catch { }
 
-        try
-        {
-            // Clean stale lock files from sudden computer shutdown / power cut
-            string singletonLock = Path.Combine(dataFolder, "SingletonLock");
-            if (File.Exists(singletonLock))
-            {
-                try { File.Delete(singletonLock); } catch { }
-            }
-        }
-        catch { }
+        CleanupStaleWebView2Locks(dataFolder);
 
         bool initialized = false;
         try
@@ -294,6 +303,21 @@ public partial class ExamWindow : Window
                 if (Directory.Exists(dataFolder))
                 {
                     try { Directory.Delete(dataFolder, recursive: true); } catch { }
+                }
+
+                // If primary profile directory is still locked after hard power-off, use a clean fallback directory
+                if (Directory.Exists(dataFolder))
+                {
+                    CleanupStaleWebView2Locks(dataFolder);
+                    string fallbackFolder = $"{dataFolder}_Recovery";
+                    try
+                    {
+                        if (Directory.Exists(fallbackFolder))
+                            Directory.Delete(fallbackFolder, recursive: true);
+                    }
+                    catch { }
+                    CleanupStaleWebView2Locks(fallbackFolder);
+                    dataFolder = fallbackFolder;
                 }
 
                 var envOptions = new CoreWebView2EnvironmentOptions(additionalArgs);
@@ -988,12 +1012,45 @@ public partial class ExamWindow : Window
         }
     }
 
+    private static void CleanupStaleWebView2Locks(string dataFolder)
+    {
+        if (string.IsNullOrWhiteSpace(dataFolder) || !Directory.Exists(dataFolder))
+            return;
+
+        string[] lockRelativePaths =
+        {
+            "SingletonLock",
+            "SingletonCookie",
+            "SingletonSocket",
+            "lockfile",
+            Path.Combine("Default", "LOCK"),
+            Path.Combine("Default", "Session Storage", "LOCK"),
+            Path.Combine("Default", "Shared Proto DB", "LOCK"),
+            Path.Combine("Default", "Local Storage", "leveldb", "LOCK")
+        };
+
+        foreach (string relPath in lockRelativePaths)
+        {
+            try
+            {
+                string fullPath = Path.Combine(dataFolder, relPath);
+                if (File.Exists(fullPath))
+                {
+                    File.SetAttributes(fullPath, FileAttributes.Normal);
+                    File.Delete(fullPath);
+                }
+            }
+            catch { }
+        }
+    }
+
     private void NotifyWebAntiCheatViolation(string type, string reason)
     {
         try
         {
-            string sanitized = reason.Replace("'", "\\'").Replace("\r", "").Replace("\n", " ");
-            string js = $"if (typeof window.__cbtReportViolation === 'function') {{ window.__cbtReportViolation('{type}', {{ reason: '{sanitized}' }}); }}";
+            string typeJson = System.Text.Json.JsonSerializer.Serialize(type ?? string.Empty);
+            string reasonJson = System.Text.Json.JsonSerializer.Serialize(reason ?? string.Empty);
+            string js = $"if (typeof window.__cbtReportViolation === 'function') {{ window.__cbtReportViolation({typeJson}, {{ reason: {reasonJson} }}); }}";
             _ = webView.CoreWebView2?.ExecuteScriptAsync(js);
         }
         catch
@@ -1006,8 +1063,8 @@ public partial class ExamWindow : Window
     {
         try
         {
-            string sanitized = reason.Replace("'", "\\'").Replace("\r", "").Replace("\n", " ");
-            string js = $"if (typeof window.__cbtReportSevereViolation === 'function') {{ window.__cbtReportSevereViolation('{sanitized}'); }}";
+            string reasonJson = System.Text.Json.JsonSerializer.Serialize(reason ?? string.Empty);
+            string js = $"if (typeof window.__cbtReportSevereViolation === 'function') {{ window.__cbtReportSevereViolation({reasonJson}); }}";
             _ = webView.CoreWebView2?.ExecuteScriptAsync(js);
         }
         catch
@@ -1250,6 +1307,8 @@ public partial class ExamWindow : Window
         }
     }
 
+    private const int WM_QUERYENDSESSION = 0x0011;
+    private const int WM_ENDSESSION = 0x0016;
     private const int WM_SYSCOMMAND = 0x0112;
     private const int SC_KEYMENU = 0xF100;
     private const int WM_APPCOMMAND = 0x0319;
@@ -1258,8 +1317,32 @@ public partial class ExamWindow : Window
     private const int WM_SYSKEYDOWN_MSG = 0x0104;
     private const int WM_SYSKEYUP_MSG = 0x0105;
 
+    private void OnApplicationSessionEnding(object sender, SessionEndingCancelEventArgs e)
+    {
+        Log.Information("Windows SessionEnding received ({Reason}). Disengaging kiosk lockdown to allow normal OS shutdown.", e.ReasonSessionEnding);
+        _isClosingCleanly = true;
+        _focusGuard?.SetSuspended(true);
+        _keyboardHook?.SetSuspended(true);
+        try { _kioskLock?.Disengage(); } catch { }
+    }
+
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
+        // 0. Allow Windows shutdown/restart/logoff (WM_QUERYENDSESSION / WM_ENDSESSION) to proceed cleanly
+        if (msg == WM_QUERYENDSESSION || msg == WM_ENDSESSION)
+        {
+            _isClosingCleanly = true;
+            _focusGuard?.SetSuspended(true);
+            _keyboardHook?.SetSuspended(true);
+            try { _kioskLock?.Disengage(); } catch { }
+            if (msg == WM_QUERYENDSESSION)
+            {
+                handled = true;
+                return (IntPtr)1;
+            }
+            return IntPtr.Zero;
+        }
+
         // 1. Block SC_KEYMENU (system menu / menu bar activation from F10 or Alt)
         if (msg == WM_SYSCOMMAND)
         {
@@ -1377,6 +1460,14 @@ public partial class ExamWindow : Window
         Log.Information("Closing ExamWindow and tearing down security services...");
 
         // Defensively teardown all services
+        try
+        {
+            if (Application.Current != null)
+            {
+                Application.Current.SessionEnding -= OnApplicationSessionEnding;
+            }
+        }
+        catch { }
         try { HwndSource.FromHwnd(_hwnd)?.RemoveHook(WndProc); } catch { }
         try { _focusGuard?.Dispose(); } catch (Exception ex) { Log.Error(ex, "FocusGuard disposal error"); }
         try { _keyboardHook?.Dispose(); } catch (Exception ex) { Log.Error(ex, "KeyboardHook disposal error"); }

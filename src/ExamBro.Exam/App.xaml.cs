@@ -39,19 +39,19 @@ public partial class App : Application
 
             string? urlOverride = null;
             bool devSafeRequested = false;
+            bool restoreRequested = false;
+            bool silentRequested = false;
 
             foreach (string arg in e.Args)
             {
                 if (arg.Equals("--restore", StringComparison.OrdinalIgnoreCase))
                 {
-                    KioskLockService.RestoreFromRecovery();
-                    MessageBox.Show(
-                        "Pemulihan sistem berhasil diselesaikan. Taskbar dan pengaturan telah dipulihkan.",
-                        "ExamBro Recovery",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Information);
-                    Shutdown(0);
-                    return;
+                    restoreRequested = true;
+                }
+                else if (arg.Equals("--silent", StringComparison.OrdinalIgnoreCase) ||
+                         arg.Equals("-q", StringComparison.OrdinalIgnoreCase))
+                {
+                    silentRequested = true;
                 }
                 else if (arg.Equals("--dev-safe", StringComparison.OrdinalIgnoreCase))
                 {
@@ -61,6 +61,21 @@ public partial class App : Application
                 {
                     urlOverride = arg[6..].Trim();
                 }
+            }
+
+            if (restoreRequested)
+            {
+                KioskLockService.RestoreFromRecovery();
+                if (!silentRequested && Environment.UserInteractive)
+                {
+                    MessageBox.Show(
+                        "Pemulihan sistem berhasil diselesaikan. Taskbar dan pengaturan telah dipulihkan.",
+                        "ExamBro Recovery",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+                Shutdown(0);
+                return;
             }
 
             if (Environment.GetEnvironmentVariable(Constants.DevSafeEnvVar) == "1")
@@ -115,7 +130,7 @@ public partial class App : Application
                 Serilog.Log.Debug(ex, "Error checking sibling processes during startup");
             }
 
-            if (RecoveryState.NeedsRecovery())
+            if (KioskLockService.HasResidualLockdownState())
             {
                 KioskLockService.RestoreFromRecovery();
             }
@@ -171,16 +186,17 @@ public partial class App : Application
 
     private bool LoadConfiguration()
     {
-        string configPath = Constants.ConfigFilePath;
+        var candidates = Constants.GetCandidateConfigPaths();
 
-        if (!File.Exists(configPath))
+        if (candidates.Count == 0)
         {
+            string configPath = Constants.ConfigFilePath;
             Serilog.Log.Information("Config file not found at {Path}. Generating default configuration.", configPath);
             _config = ExamConfig.CreateDefault();
             try
             {
                 byte[] encrypted = ConfigEncryption.EncryptPortableConfig(_config);
-                File.WriteAllBytes(Constants.PortableConfigPath, encrypted);
+                AtomicFileWriter.WriteAllBytesFlushed(Constants.PortableConfigPath, encrypted);
                 Serilog.Log.Information("Saved default portable config to {Path}", Constants.PortableConfigPath);
             }
             catch (Exception ex)
@@ -190,23 +206,43 @@ public partial class App : Application
             return true;
         }
 
-        try
+        foreach (string candidatePath in candidates)
         {
-            byte[] encryptedBytes = File.ReadAllBytes(configPath);
-            _config = ConfigEncryption.DecryptConfig(encryptedBytes);
-            if (_config == null)
+            try
             {
-                Serilog.Log.Warning("Decryption returned null config. Falling back to default configuration.");
-                _config = ExamConfig.CreateDefault();
+                byte[] encryptedBytes = File.ReadAllBytes(candidatePath);
+                if (encryptedBytes.Length == 0)
+                {
+                    Serilog.Log.Warning("Config file at {Path} is empty (0 bytes). Trying next backup candidate...", candidatePath);
+                    continue;
+                }
+
+                var loaded = ConfigEncryption.DecryptConfig(encryptedBytes);
+                if (loaded != null)
+                {
+                    _config = loaded;
+                    // Self-heal primary PortableConfigPath if loaded from a backup candidate after power loss
+                    if (!candidatePath.Equals(Constants.PortableConfigPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            AtomicFileWriter.WriteAllBytesFlushed(Constants.PortableConfigPath, encryptedBytes);
+                            Serilog.Log.Information("Restored corrupted primary config from backup {BackupPath}", candidatePath);
+                        }
+                        catch { }
+                    }
+                    return true;
+                }
             }
-            return true;
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "Failed to decrypt config file at {Path}. Trying next candidate...", candidatePath);
+            }
         }
-        catch (Exception ex)
-        {
-            Serilog.Log.Warning(ex, "Failed to decrypt config file. Falling back to default configuration.");
-            _config = ExamConfig.CreateDefault();
-            return true;
-        }
+
+        Serilog.Log.Warning("All config candidates failed decryption. Falling back to default configuration.");
+        _config = ExamConfig.CreateDefault();
+        return true;
     }
 
     private static bool DebuggerCheck()
