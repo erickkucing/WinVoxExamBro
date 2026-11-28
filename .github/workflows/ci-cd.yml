@@ -6,6 +6,8 @@ on:
     tags: [ "v*" ]
   pull_request:
     branches: [ "master", "main" ]
+  schedule:
+    - cron: '0 19 * * *' # Nightly 02:00 WIB high-iteration concurrency stress run
   workflow_dispatch:
 
 permissions:
@@ -14,9 +16,9 @@ permissions:
   actions: read
 
 jobs:
-  test:
-    name: Build & Test (.NET 8 WPF xUnit)
-    runs-on: windows-latest
+  unit-and-stress:
+    name: Build, Core Unit & Stress Tests (.NET 8)
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
@@ -40,28 +42,219 @@ jobs:
       - name: Restore NuGet Dependencies
         run: dotnet restore ExamBro.sln
 
-      - name: Build Solution (Release)
+      - name: Build Full Solution (Release, cross-targeting Windows)
         run: dotnet build ExamBro.sln -c Release --no-restore
 
-      - name: Run Unit Tests
-        run: dotnet test tests/ExamBro.Tests/ExamBro.Tests.csproj -c Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
+      - name: Run Unit & Concurrency Stress Tests
+        env:
+          STRESS_ITERATIONS: ${{ github.event_name == 'schedule' && '5000' || '300' }}
+        run: |
+          dotnet test tests/ExamBro.Tests/ExamBro.Tests.csproj \
+            -c Release \
+            --no-build \
+            --filter "Category!=WindowsOnly" \
+            --verbosity normal \
+            --collect:"XPlat Code Coverage" \
+            --logger "trx;LogFileName=unit-stress-results.trx"
 
-      - name: Upload Unit Test Results
+      - name: Upload Unit & Stress Test Results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: TestResults
-          path: tests/ExamBro.Tests/TestResults/*.trx
+          name: TestResults-UnitAndStress
+          path: tests/ExamBro.Tests/TestResults/**
 
-  publish-and-package:
-    name: Publish Binaries & Build Installer
-    needs: test
-    runs-on: windows-latest
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+  contract-tests:
+    name: JS Bridge Contract Tests (Playwright)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Contract Test Dependencies
+        working-directory: tests/e2e-contract
+        run: npm install --no-audit --no-fund
+
+      - name: Install Playwright Chromium Browser
+        working-directory: tests/e2e-contract
+        run: npx playwright install chromium --with-deps
+
+      - name: Run JS Bridge Contract Suite
+        working-directory: tests/e2e-contract
+        run: npm test
+
+  e2e-windows:
+    name: Windows WPF & WebView2 E2E Tests
+    runs-on: windows-latest
+    needs: unit-and-stress
+    if: github.event_name != 'schedule'
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore NuGet Dependencies
+        run: dotnet restore ExamBro.sln
+
+      - name: Build Debug ExamBro (CDP E2E Seam Enabled Only in Debug)
+        run: dotnet build src/ExamBro.Exam/ExamBro.Exam.csproj -c Debug --no-restore
+
+      - name: Publish Single-File Release ExamBro for Standalone E2E
+        run: |
+          dotnet publish src/ExamBro.Exam/ExamBro.Exam.csproj `
+            -c Release `
+            --no-restore `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=false `
+            -o dist/exam
+
+      - name: Run Windows E2E Tests (FlaUI + WebView2 + Win32 Kiosk)
+        env:
+          EXAMBRO_E2E: '1'
+          EXAMBRO_EXE: ${{ github.workspace }}\dist\exam\ExamBro.Exam.exe
+          EXAMBRO_DEBUG_EXE: ${{ github.workspace }}\src\ExamBro.Exam\bin\Debug\net8.0-windows\ExamBro.Exam.exe
+        run: |
+          dotnet test tests/ExamBro.Tests.Windows/ExamBro.Tests.Windows.csproj `
+            -c Release `
+            --no-restore `
+            --filter "Category=WindowsOnly" `
+            --verbosity normal `
+            --logger "trx;LogFileName=e2e-windows.trx"
+
+      - name: Upload Windows E2E Artifacts & Failure Screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-windows-artifacts
+          path: |
+            tests/ExamBro.Tests.Windows/TestResults/**/*.trx
+            tests/ExamBro.Tests.Windows/TestResults/**/*.png
+
+  projectcbt-integration:
+    name: Disposable Integration Check vs projectCBT (Read-Only)
+    runs-on: ubuntu-latest
+    needs: contract-tests
+    if: ${{ secrets.PROJECTCBT_READ_TOKEN != '' && github.event_name != 'schedule' }}
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: cbt_testing
+        ports: [ '3306:3306' ]
+        options: --health-cmd="mysqladmin ping -h 127.0.0.1 -proot" --health-interval=5s --health-timeout=5s --health-retries=10
+      redis:
+        image: redis:7-alpine
+        ports: [ '6379:6379' ]
+
+    steps:
+      - name: Checkout WinVoxExamBro
+        uses: actions/checkout@v4
+
+      - name: Checkout projectCBT Read-Only at Pinned SHA
+        uses: actions/checkout@v4
+        with:
+          repository: erickkucing/projectCBT
+          ref: 3e2c4179d3d67f817850357ecacf7d670d64241e
+          token: ${{ secrets.PROJECTCBT_READ_TOKEN }}
+          path: _projectcbt_ref
+
+      - name: Setup PHP & Node.js
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, pdo_mysql, redis, zip
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Boot Disposable projectCBT & Run Zoom + Bridge Smoke Check
+        run: |
+          cd _projectcbt_ref
+          cp .env.example .env
+          sed -i 's/DB_HOST=.*/DB_HOST=127.0.0.1/' .env
+          sed -i 's/DB_DATABASE=.*/DB_DATABASE=cbt_testing/' .env
+          sed -i 's/DB_USERNAME=.*/DB_USERNAME=root/' .env
+          sed -i 's/DB_PASSWORD=.*/DB_PASSWORD=root/' .env
+          composer install --no-interaction --prefer-dist
+          php artisan key:generate
+          php artisan migrate --seed --force
+          php artisan serve --host=127.0.0.1 --port=8008 &
+          SERVER_PID=$!
+          trap "kill $SERVER_PID 2>/dev/null || true" EXIT
+          sleep 4
+          cd ../tests/e2e-contract
+          npm install --no-audit --no-fund
+          npx playwright install chromium --with-deps
+          npm test
+          node -e '
+            const fs = require("node:fs");
+            const { chromium } = require("@playwright/test");
+            (async () => {
+              const bridge = fs.readFileSync("../../src/ExamBro.Exam/Resources/cbt-bridge.js", "utf8");
+              const browser = await chromium.launch({ args: ["--no-sandbox"] });
+              const ctx = await browser.newContext({ userAgent: "Mozilla/5.0 ExamBro/1.0.0 ExamBrowser/1.0.0 LouisVox/1.0.0" });
+              await ctx.addInitScript({ content: bridge });
+              const page = await ctx.newPage();
+              const resp = await page.goto("http://127.0.0.1:8008/login", { waitUntil: "domcontentloaded" });
+              const cdp = await ctx.newCDPSession(page);
+              const results = [];
+              for (const scale of [1.0, 0.5, 1.5]) {
+                await cdp.send("Emulation.setDeviceMetricsOverride", { width: Math.round(1280 / scale), height: Math.round(720 / scale), deviceScaleFactor: scale, mobile: false });
+                const physW = await page.evaluate(() => window.innerWidth * window.devicePixelRatio);
+                results.push({ scale, physW });
+              }
+              fs.writeFileSync("../../projectcbt-integration-findings.md",
+                `# Disposable projectCBT Integration Check\n- Login HTTP Status: ${resp?.status()}\n- Physical Viewport Checks: ${JSON.stringify(results)}\n`);
+              await browser.close();
+              if (!resp || resp.status() >= 400) process.exit(1);
+            })().catch(err => { console.error(err); process.exit(1); });
+          '
+
+      - name: Upload Disposable projectCBT Integration Findings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: projectcbt-integration-findings
+          path: projectcbt-integration-findings.md
+
+  publish-and-package:
+    name: Publish Binaries & Build Installer
+    needs: [unit-and-stress, contract-tests, e2e-windows]
+    runs-on: windows-latest
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.event_name != 'schedule'
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup .NET 8 SDK
         uses: actions/setup-dotnet@v4
@@ -87,6 +280,7 @@ jobs:
             --self-contained true `
             -p:PublishSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=false `
             -o dist/ExamBro.Exam
 
       - name: Publish ExamBro Config Tool (win-x64 Single-File)

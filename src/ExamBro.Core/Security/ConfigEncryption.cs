@@ -273,38 +273,60 @@ public static class ConfigEncryption
     /// (LocalMachine scope) with application-specific entropy.
     /// The encrypted key is stored on disk at <see cref="Constants.KeystorePath"/>.
     /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static byte[] GetOrCreateMasterKey(byte[] entropy)
     {
-        string path = Constants.KeystorePath;
-        string? dir = Path.GetDirectoryName(path);
-        if (dir != null && !Directory.Exists(dir))
-            Directory.CreateDirectory(dir);
-
-        if (File.Exists(path))
+        using var mutex = new Mutex(false, @"Local\LouisVoxExamBro_Keystore_Mutex");
+        bool acquired = false;
+        try
         {
-            byte[] encrypted = File.ReadAllBytes(path);
-            if (encrypted.Length > 0)
+            try
             {
-                // ProtectedData.Unprotect with LocalMachine scope + entropy.
-                // This will throw CryptographicException if the machine or entropy differ.
-                return System.Security.Cryptography.ProtectedData.Unprotect(
-                    encrypted,
-                    entropy,
-                    DataProtectionScope.LocalMachine);
+                acquired = mutex.WaitOne(TimeSpan.FromSeconds(5));
+            }
+            catch (AbandonedMutexException)
+            {
+                acquired = true;
+            }
+
+            string path = Constants.KeystorePath;
+            string? dir = Path.GetDirectoryName(path);
+            if (dir != null && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+
+            if (File.Exists(path))
+            {
+                byte[] encrypted = File.ReadAllBytes(path);
+                if (encrypted.Length > 0)
+                {
+                    // ProtectedData.Unprotect with LocalMachine scope + entropy.
+                    // This will throw CryptographicException if the machine or entropy differ.
+                    return System.Security.Cryptography.ProtectedData.Unprotect(
+                        encrypted,
+                        entropy,
+                        DataProtectionScope.LocalMachine);
+                }
+            }
+
+            // First run (or zero-byte file after power cut): generate a fresh 256-bit key
+            byte[] newKey = new byte[Constants.KeyLength];
+            RandomNumberGenerator.Fill(newKey);
+
+            byte[] protectedKey = System.Security.Cryptography.ProtectedData.Protect(
+                newKey,
+                entropy,
+                DataProtectionScope.LocalMachine);
+
+            AtomicFileWriter.WriteAllBytesFlushed(path, protectedKey);
+            return newKey;
+        }
+        finally
+        {
+            if (acquired)
+            {
+                try { mutex.ReleaseMutex(); } catch { }
             }
         }
-
-        // First run (or zero-byte file after power cut): generate a fresh 256-bit key
-        byte[] newKey = new byte[Constants.KeyLength];
-        RandomNumberGenerator.Fill(newKey);
-
-        byte[] protectedKey = System.Security.Cryptography.ProtectedData.Protect(
-            newKey,
-            entropy,
-            DataProtectionScope.LocalMachine);
-
-        AtomicFileWriter.WriteAllBytesFlushed(path, protectedKey);
-        return newKey;
     }
 
     /// <summary>

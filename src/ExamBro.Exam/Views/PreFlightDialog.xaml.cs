@@ -54,6 +54,7 @@ public partial class PreFlightDialog : Window
     private readonly bool _isDevSafe;
     private readonly ObservableCollection<PreFlightCheckItem> _checks = new();
     private DispatcherTimer? _autoProceedTimer;
+    private volatile bool _isClosed;
 
     private static readonly Brush SuccessColor = new SolidColorBrush(Color.FromRgb(22, 163, 74));
     private static readonly Brush FailureColor = new SolidColorBrush(Color.FromRgb(220, 38, 38));
@@ -92,6 +93,11 @@ public partial class PreFlightDialog : Window
 
         icChecks.ItemsSource = _checks;
         Loaded += OnLoaded;
+        Closed += (_, _) =>
+        {
+            _isClosed = true;
+            _autoProceedTimer?.Stop();
+        };
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -101,6 +107,8 @@ public partial class PreFlightDialog : Window
 
     private async Task RunAllChecksAsync()
     {
+        if (_isClosed) return;
+
         _autoProceedTimer?.Stop();
         _autoProceedTimer = null;
 
@@ -134,6 +142,7 @@ public partial class PreFlightDialog : Window
 
         // 1. Administrator Elevation Check
         await Task.Delay(100);
+        if (_isClosed) return;
         bool isAdmin = EnvironmentDetector.IsElevatedAdministrator();
         if (isAdmin)
         {
@@ -149,6 +158,7 @@ public partial class PreFlightDialog : Window
 
         // 2. Microsoft Edge WebView2 Runtime Check
         await Task.Delay(100);
+        if (_isClosed) return;
         try
         {
             string wvVersion = Microsoft.Web.WebView2.Core.CoreWebView2Environment.GetAvailableBrowserVersionString();
@@ -162,6 +172,7 @@ public partial class PreFlightDialog : Window
 
         // 3. Network Check (Localhost & 100% Offline Ready)
         await Task.Delay(120);
+        if (_isClosed) return;
         bool isLocalhostServer = false;
         try
         {
@@ -188,6 +199,7 @@ public partial class PreFlightDialog : Window
 
         // 3. Virtual Machine Check (Respects settings toggle)
         await Task.Delay(150);
+        if (_isClosed) return;
         if (!_config.Security.BlockVirtualMachine)
         {
             MarkPassed(itemVm, "Pemeriksaan VM dinonaktifkan di pengaturan (Diizinkan).");
@@ -212,6 +224,7 @@ public partial class PreFlightDialog : Window
 
         // 4. Remote Desktop Session Check
         await Task.Delay(120);
+        if (_isClosed) return;
         var (isRdp, rdpReason) = EnvironmentDetector.DetectRemoteSession();
         if (!isRdp)
         {
@@ -229,6 +242,7 @@ public partial class PreFlightDialog : Window
 
         // 5. Debugger Check
         await Task.Delay(100);
+        if (_isClosed) return;
         var (isDebugger, debuggerReason) = EnvironmentDetector.DetectDebugger();
         if (!isDebugger)
         {
@@ -246,6 +260,7 @@ public partial class PreFlightDialog : Window
 
         // 6. Process Blacklist Check
         await Task.Delay(150);
+        if (_isClosed) return;
         using var procMonitor = new ProcessMonitorService(_config);
         var offendingProcs = procMonitor.CheckRunningBlacklist();
         if (offendingProcs.Count == 0)
@@ -267,6 +282,7 @@ public partial class PreFlightDialog : Window
 
         // 7. Multi-Monitor Configuration Check
         await Task.Delay(100);
+        if (_isClosed) return;
         var monitors = ScreenProtectionService.EnumerateMonitors();
         if (monitors.Count <= 1 || _config.Security.MultiMonitor != MultiMonitorPolicy.Block)
         {
@@ -277,6 +293,8 @@ public partial class PreFlightDialog : Window
             MarkFailed(itemMonitors, $"Terdeteksi {monitors.Count} layar aktif. Lepaskan kabel monitor tambahan.", isCritical: true);
             allPassed = false;
         }
+
+        if (_isClosed) return;
 
         btnRetry.IsEnabled = true;
 
@@ -289,7 +307,7 @@ public partial class PreFlightDialog : Window
             _autoProceedTimer.Tick += (s, ev) =>
             {
                 _autoProceedTimer?.Stop();
-                if (DialogResult != true)
+                if (!_isClosed && DialogResult != true)
                 {
                     DialogResult = true;
                     Close();
@@ -397,7 +415,10 @@ public partial class PreFlightDialog : Window
         }
 
         await Task.Delay(600);
-        await RunAllChecksAsync();
+        if (!_isClosed)
+        {
+            await RunAllChecksAsync();
+        }
     }
 
     private void BtnElevateAdmin_Click(object sender, RoutedEventArgs e)
@@ -407,6 +428,7 @@ public partial class PreFlightDialog : Window
             var startInfo = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = Environment.ProcessPath ?? System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName ?? "ExamBro.Exam.exe",
+                WorkingDirectory = Constants.AppDirectory,
                 UseShellExecute = true,
                 Verb = "runas"
             };

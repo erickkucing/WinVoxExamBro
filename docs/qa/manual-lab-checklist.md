@@ -1,0 +1,22 @@
+# Checklist Verifikasi Manual PC Lab (WinVoxExamBro)
+
+Checklist ini mencakup skenario perangkat keras dan keamanan Windows yang **tidak dapat** diotomatisasi di runner CI (`windows-latest` Azure VM) dan wajib diuji langsung pada minimal **1 PC Windows 10** dan **1 PC Windows 11** sebelum deployment produksi ruang ujian.
+
+> Uji kedua tipe akun Windows: **Standard User** dan **Administrator**, dengan konfigurasi tersemat (`LouisVox ExamBro.exe` berdiri sendiri) maupun mode terinstal di `Program Files`.
+
+| No | Skenario Uji | Langkah Eksekusi | Kriteria Lulus (Pass) | Win 10 (Std/Adm) | Win 11 (Std/Adm) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| M-01 | **Hard Power-Off -> Boot Recovery Nyata** | 1. Buka ujian sampai mode kiosk aktif (`DisableTaskMgr=1`, `NoClose=1`).<br>2. Cabut kabel listrik / tekan tahan tombol power 5 detik hingga PC mati mendadak.<br>3. Nyalakan PC kembali, login Windows, buka Start Menu & tekan Ctrl+Alt+Del. | Setelah boot/logon, tombol **Shut down**, **Restart**, **Sign out**, dan **Task Manager** otomatis pulih seperti semula. Task `LouisVoxExamBro_EmergencyRecovery` terhapus otomatis. | [ ] | [ ] |
+| M-02 | **Hard Power-Off Saat Aplikasi dari USB / Flashdisk Dicabut** | 1. Jalankan `LouisVox ExamBro.exe` dari flashdisk.<br>2. Matikan PC paksa.<br>3. Cabut flashdisk sebelum menyalakan PC kembali. | `C:\ProgramData\LouisVox ExamBro\recovery\restore-kiosk.ps1` tetap memulihkan Windows sepenuhnya tanpa memerlukan `.exe` di flashdisk. | [ ] | [ ] |
+| M-03 | **Peluncuran Langsung dari ZIP / `%TEMP%` Tanpa `exambro.cfg`** | 1. Konfigurasikan URL ujian custom (mis. `http://192.168.10.50:8080/login`) & password pengawas baru.<br>2. Ekspor ZIP portabel, copy hanya `LouisVox ExamBro.exe` ke `%TEMP%` atau Desktop pada PC lab baru.<br>3. Pastikan PC tersebut sebelumnya memiliki `exambro.cfg` basi di `ProgramData` (bila bekas instalasi lama). | Aplikasi memuat URL custom & password baru Anda — **tidak pernah** jatuh kembali ke `192.168.70.9` / password default. | [ ] | [ ] |
+| M-04 | **Ctrl+Alt+Del (SAS Secure Desktop) & UAC** | Selama ujian aktif, tekan `Ctrl+Alt+Del` berkali-kali cepat dan perlahan. | `WEKF` (Windows Keyboard Filter) memblokir layar SAS atau `SasNeutralizerWorker` langsung menutup SAS dalam < 200 ms dan mengembalikan fokus ke layar ujian + mencatat pelanggaran. | [ ] | [ ] |
+| M-05 | **Hotplug Monitor Kedua Saat Ujian Aktif (`WM_DISPLAYCHANGE`)** | Mulai ujian dengan 1 monitor terpasang (`MultiMonitor = CoverAll` atau `Block`), lalu colokkan kabel HDMI/VGA monitor kedua di tengah ujian. | Kebijakan `CoverAll` otomatis menutup layar kedua dengan blackout overlay; kebijakan `Block` langsung memicu pelanggaran & kunci sesi. | [ ] | [ ] |
+| M-06 | **Pintasan `Win+P` & Tombol Proyeksi OEM Laptop** | Tekan `Win+P`, `F4`/`Fn+Proyektor`, atau `Win+Tab` / `Win+A` berkali-kali cepat selama ujian. | `DisplaySwitch.exe` (via IFEO + `ProcessMonitorService` + `FocusGuardService`) tidak pernah muncul ke depan dan overlay/menu sistem tidak dapat mengambil fokus. | [ ] | [ ] |
+| M-07 | **Zoom 50%–150% di Server CBT Asli (projectCBT)** | Buka halaman soal aktif di server CBT produksi/staging, klik tombol Zoom `-` dan `+` di toolbar hingga `50%` dan `150%` berkali-kali. | Tampilan soal membesar/mengecil halus tanpa **false positive** peringatan `split_screen` maupun `fullscreen_exit`. | [ ] | [ ] |
+| M-08 | **Gangguan Jaringan Saat Mengerjakan Esai & Klik Selesai** | Matikan Wi-Fi/cabut LAN 10 detik saat sedang mengetik jawaban di `/exam/workspace`, lalu sambungkan kembali. | DOM lembar soal **tidak** tertimpa halaman error; indikator toleransi aktif; jawaban tetap tersimpan setelah koneksi kembali normal. | [ ] | [ ] |
+| M-09 | **Restart/Shutdown Normal Windows Saat Ujian Berjalan (`WM_ENDSESSION`)** | 1. Picu shutdown lalu klik **Cancel** pada dialog konfirmasi OS.<br>2. Ulangi lalu biarkan Windows benar-benar shutdown. | Saat Cancel: kiosk **tetap terkunci**. Saat shutdown sungguhan: kiosk dilepas bersih sehingga boot berikutnya normal. | [ ] | [ ] |
+
+**Catatan Penandatanganan Pengujian**:
+- Nama Penguji: ____________________
+- Tanggal & Commit SHA: ____________________
+- Hasil Akhir: [ ] Lulus Semua / [ ] Ada Catatan (lampirkan `logs/exambro-*.log`)

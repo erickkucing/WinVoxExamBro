@@ -22,8 +22,9 @@ public class KioskLockService : IDisposable
     private static readonly ILogger Log = Serilog.Log.ForContext<KioskLockService>();
 
     private readonly RecoveryState _recovery = new();
-    private bool _engaged;
-    private bool _disposed;
+    private readonly object _stateLock = new();
+    private volatile bool _engaged;
+    private volatile bool _disposed;
 
     // Win32 P/Invoke Declarations
 
@@ -146,98 +147,105 @@ public class KioskLockService : IDisposable
     /// </summary>
     public void Engage(ExamConfig config)
     {
-        if (_engaged)
+        lock (_stateLock)
         {
-            Log.Information("Kiosk lockdown is already engaged");
-            return;
-        }
-
-        Log.Information("Engaging kiosk lock service...");
-
-        try
-        {
-            // 0. Capture user SID/hive, pre-record original registry values, flush recovery journal,
-            //    and register the boot/logon scheduled task BEFORE applying any system lockdown.
-            CaptureCurrentUserInfo();
-            if (config.Security.DisableRegistryPolicies)
+            if (_disposed || _engaged)
             {
-                CaptureOriginalRegistryValues();
-            }
-            PersistRecoverySnapshotAndTask();
-
-            // 1. Hide primary and secondary taskbars
-            HideTaskbar();
-
-            // 2. Set registry policies if enabled
-            if (config.Security.DisableRegistryPolicies)
-            {
-                ApplyRegistryPolicies();
+                Log.Information("Kiosk lockdown is already engaged");
+                return;
             }
 
-            // 3. Disable accessibility shortcut keys (StickyKeys, FilterKeys, ToggleKeys)
-            DisableAccessibilityHotkeys();
+            Log.Information("Engaging kiosk lock service...");
 
-            // 4. Terminate explorer.exe shell if requested by config
-            if (config.Security.KillExplorerShell)
+            try
             {
-                KillExplorer();
+                // 0. Capture user SID/hive, pre-record original registry values, flush recovery journal,
+                //    and register the boot/logon scheduled task BEFORE applying any system lockdown.
+                CaptureCurrentUserInfo();
+                if (config.Security.DisableRegistryPolicies)
+                {
+                    CaptureOriginalRegistryValues();
+                }
+                PersistRecoverySnapshotAndTask();
+
+                // 1. Hide primary and secondary taskbars
+                HideTaskbar();
+
+                // 2. Set registry policies if enabled
+                if (config.Security.DisableRegistryPolicies)
+                {
+                    ApplyRegistryPolicies();
+                }
+
+                // 3. Disable accessibility shortcut keys (StickyKeys, FilterKeys, ToggleKeys)
+                DisableAccessibilityHotkeys();
+
+                // 4. Terminate explorer.exe shell if requested by config
+                if (config.Security.KillExplorerShell)
+                {
+                    KillExplorer();
+                }
+
+                // 5. Re-persist recovery state and script with final WEKF/accessibility/explorer flags
+                PersistRecoverySnapshotAndTask(registerTask: false);
+                _engaged = true;
+
+                Log.Information("Kiosk lockdown successfully engaged");
             }
-
-            // 5. Re-persist recovery state and script with final WEKF/accessibility/explorer flags
-            PersistRecoverySnapshotAndTask(registerTask: false);
-            _engaged = true;
-
-            Log.Information("Kiosk lockdown successfully engaged");
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Error while engaging kiosk lockdown. Attempting partial cleanup...");
-            Disengage();
-            throw;
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Error while engaging kiosk lockdown. Attempting partial cleanup...");
+                Disengage();
+                throw;
+            }
         }
     }
 
     /// <summary>
     /// Disengages kiosk lockdown: restores taskbars, reverts registry policies,
     /// re-enables accessibility hotkeys, removes the boot recovery scheduled task,
-    /// and deletes the recovery state files.
+    /// and deletes the recovery state files. Safe to call concurrently and idempotently.
     /// </summary>
     public void Disengage()
     {
-        if (!_engaged && !_recovery.OriginalRegistryValues.Any() && !_recovery.ExplorerWasKilled)
+        lock (_stateLock)
         {
-            return;
-        }
-
-        Log.Information("Disengaging kiosk lock service...");
-
-        try
-        {
-            // 1. Restore taskbars
-            ShowTaskbar();
-
-            // 2. Restore original registry policies
-            RestoreRegistryPolicies();
-
-            // 3. Restore accessibility hotkeys
-            RestoreAccessibilityHotkeys();
-
-            // 4. Restart explorer.exe shell if it was killed
-            if (_recovery.ExplorerWasKilled)
+            if (!_engaged && !_recovery.OriginalRegistryValues.Any() && !_recovery.ExplorerWasKilled)
             {
-                RestartExplorer();
+                return;
             }
 
-            // 5. Remove boot recovery scheduled task and delete recovery state files
-            UnregisterEmergencyRecoveryTask();
-            RecoveryState.ClearRecoveryFile();
-            _engaged = false;
+            Log.Information("Disengaging kiosk lock service...");
 
-            Log.Information("Kiosk lockdown successfully disengaged");
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Error occurred while disengaging kiosk lockdown");
+            try
+            {
+                // 1. Restore taskbars
+                ShowTaskbar();
+
+                // 2. Restore original registry policies
+                RestoreRegistryPolicies();
+
+                // 3. Restore accessibility hotkeys
+                RestoreAccessibilityHotkeys();
+
+                // 4. Restart explorer.exe shell if it was killed
+                if (_recovery.ExplorerWasKilled)
+                {
+                    RestartExplorer();
+                    _recovery.ExplorerWasKilled = false;
+                }
+
+                // 5. Remove boot recovery scheduled task and delete recovery state files
+                UnregisterEmergencyRecoveryTask();
+                RecoveryState.ClearRecoveryFile();
+                _engaged = false;
+
+                Log.Information("Kiosk lockdown successfully disengaged");
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Error occurred while disengaging kiosk lockdown");
+            }
         }
     }
 
@@ -562,7 +570,7 @@ public class KioskLockService : IDisposable
         // Restore Keyboard Filter if previously configured
         ConfigureKeyboardFilter(enableFilter: false);
 
-        foreach (var entry in _recovery.OriginalRegistryValues)
+        foreach (var entry in _recovery.OriginalRegistryValues.ToList())
         {
             string fullPath = entry.Key; // e.g. HKCU\Software\... or HKLM\Software\...
             int? originalValue = entry.Value;
@@ -1239,13 +1247,16 @@ public class KioskLockService : IDisposable
 
     protected virtual void Dispose(bool disposing)
     {
-        if (!_disposed)
+        lock (_stateLock)
         {
-            if (_engaged)
+            if (!_disposed)
             {
-                Disengage();
+                if (disposing && (_engaged || _recovery.OriginalRegistryValues.Any() || _recovery.ExplorerWasKilled))
+                {
+                    Disengage();
+                }
+                _disposed = true;
             }
-            _disposed = true;
         }
     }
 

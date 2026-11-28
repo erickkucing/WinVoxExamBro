@@ -40,7 +40,8 @@ public partial class ExamWindow : Window
     private IntPtr _hwnd = IntPtr.Zero;
     private string _resolvedStartUrl = string.Empty;
     private string _lastValidUrl = string.Empty;
-    private bool _isClosingCleanly;
+    private volatile bool _isClosingCleanly;
+    private readonly ExamBro.Core.Security.PasswordAttemptTracker _exitAttemptTracker = new();
 
     public ExamWindow(ExamConfig config, bool isDevSafe = false, string? urlOverride = null)
     {
@@ -79,31 +80,42 @@ public partial class ExamWindow : Window
 
     private async void OnWindowLoaded(object sender, RoutedEventArgs e)
     {
-        var helper = new WindowInteropHelper(this);
-        _hwnd = helper.Handle;
-
-        Log.Information("ExamWindow loaded. HWND: 0x{Hwnd:X}, DevSafe: {DevSafe}", _hwnd.ToInt64(), _isDevSafe);
-
-        // Multi-layer defense: Win32 message hook for blocking F10, SC_KEYMENU, and app commands
-        var source = HwndSource.FromHwnd(_hwnd);
-        source?.AddHook(WndProc);
-
-        if (Application.Current != null)
+        try
         {
-            Application.Current.SessionEnding += OnApplicationSessionEnding;
+            var helper = new WindowInteropHelper(this);
+            _hwnd = helper.Handle;
+
+            Log.Information("ExamWindow loaded. HWND: 0x{Hwnd:X}, DevSafe: {DevSafe}", _hwnd.ToInt64(), _isDevSafe);
+
+            // Multi-layer defense: Win32 message hook for blocking F10, SC_KEYMENU, and app commands
+            var source = HwndSource.FromHwnd(_hwnd);
+            source?.AddHook(WndProc);
+
+            if (Application.Current != null)
+            {
+                Application.Current.SessionEnding += OnApplicationSessionEnding;
+            }
+
+            // 1. Resolve and prepare Start URL
+            PrepareStartUrl();
+
+            _viewModel.PingService.UpdateTargetFromUrl(_resolvedStartUrl);
+            _viewModel.PingService.PingUpdated += OnPingStatusChanged;
+
+            // 2. Initialize Security Services
+            InitializeSecurityServices();
+
+            // 3. Initialize WebView2 Browser Engine
+            await InitializeWebView2Async();
         }
-
-        // 1. Resolve and prepare Start URL
-        PrepareStartUrl();
-
-        _viewModel.PingService.UpdateTargetFromUrl(_resolvedStartUrl);
-        _viewModel.PingService.PingUpdated += OnPingStatusChanged;
-
-        // 2. Initialize Security Services
-        InitializeSecurityServices();
-
-        // 3. Initialize WebView2 Browser Engine
-        await InitializeWebView2Async();
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Unhandled exception during ExamWindow load");
+            if (!_isClosingCleanly)
+            {
+                ShowErrorPage();
+            }
+        }
     }
 
     private void OnPingStatusChanged(PingStatus status)
@@ -276,6 +288,14 @@ public partial class ExamWindow : Window
         string dataFolder = Constants.WebView2DataFolder;
         // Valid Chromium arguments only (NO --inprivate or --user-agent-product which cause E_INVALIDARG)
         string additionalArgs = "--disable-session-crashed-bubble --hide-crash-restore-bubble --no-recovery-component --disable-features=Translate,OptimizationHints,RestoreTabs --ignore-certificate-errors --ignore-certificate-errors-spki-list --allow-insecure-localhost";
+#if DEBUG
+        if (string.Equals(Environment.GetEnvironmentVariable("EXAMBRO_E2E"), "1", StringComparison.Ordinal) &&
+            int.TryParse(Environment.GetEnvironmentVariable("EXAMBRO_E2E_CDP_PORT"), out int cdpPort) &&
+            cdpPort is >= 1024 and <= 65535)
+        {
+            additionalArgs += $" --remote-debugging-port={cdpPort}";
+        }
+#endif
 
         try
         {
@@ -333,10 +353,13 @@ public partial class ExamWindow : Window
             }
         }
 
-        if (!initialized || webView.CoreWebView2 == null)
+        if (_isClosingCleanly || !initialized || webView.CoreWebView2 == null)
         {
-            Log.Error("WebView2 failed to initialize CoreWebView2");
-            ShowErrorPage();
+            if (!_isClosingCleanly)
+            {
+                Log.Error("WebView2 failed to initialize CoreWebView2");
+                ShowErrorPage();
+            }
             return;
         }
 
@@ -347,9 +370,11 @@ public partial class ExamWindow : Window
 
             // Inject projectCBT JavaScript bridge before document creation
             await InjectProjectCbtBridgeAsync();
+            if (_isClosingCleanly || webView.CoreWebView2 == null) return;
 
             // Apply CBT Audio volume and mute settings
             await ApplyAudioSettingsAsync();
+            if (_isClosingCleanly || webView.CoreWebView2 == null) return;
 
             // Clear cache and cookies for privacy isolation asynchronously without blocking navigation
             try
@@ -363,287 +388,26 @@ public partial class ExamWindow : Window
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed configuring WebView2 after initialization");
-            ShowErrorPage();
+            if (!_isClosingCleanly)
+            {
+                Log.Error(ex, "Failed configuring WebView2 after initialization");
+                ShowErrorPage();
+            }
         }
+    }
+
+    internal static string GetCbtBridgeScript()
+    {
+        var assembly = typeof(ExamWindow).Assembly;
+        using var stream = assembly.GetManifestResourceStream("ExamBro.Exam.Resources.cbt-bridge.js")
+            ?? throw new InvalidOperationException("Embedded resource ExamBro.Exam.Resources.cbt-bridge.js not found.");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 
     private async Task InjectProjectCbtBridgeAsync()
     {
-        string bridgeScript = @"
-(function() {
-    window.__louisvox_suppress_blur = false;
-    window.__louisvox_network_unstable = false;
-    window.__exambro_overlay_active = false;
-    window.__cbt_lightbox_active = false;
-    window.__cbt_last_unstable_time = 0;
-
-    // Pantau event status koneksi browser untuk toleransi tinggi
-    window.addEventListener('offline', function() {
-        window.__louisvox_network_unstable = true;
-        window.__louisvox_suppress_blur = true;
-        window.__cbt_last_unstable_time = Date.now();
-    });
-    window.addEventListener('online', function() {
-        window.__cbt_last_unstable_time = Date.now();
-        setTimeout(function() {
-            if (typeof navigator !== 'undefined' && navigator.onLine && !window.__louisvox_network_unstable) {
-                window.__louisvox_suppress_blur = false;
-            }
-        }, 15000);
-    });
-
-    // Multi-layer DOM capture to completely disable F10, Ctrl+C, Ctrl+V, Ctrl+X, Insert, and clipboard operations
-    window.addEventListener('keydown', function(e) {
-        if (e.key === 'F10' || e.keyCode === 121 || (e.keyCode >= 112 && e.keyCode <= 135)) {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-        }
-        if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C' || e.key === 'v' || e.key === 'V' || e.key === 'x' || e.key === 'X' || e.keyCode === 67 || e.keyCode === 86 || e.keyCode === 88 || e.keyCode === 45)) {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-        }
-        if (e.shiftKey && (e.key === 'Insert' || e.keyCode === 45)) {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-        }
-    }, true);
-    window.addEventListener('keyup', function(e) {
-        if (e.key === 'F10' || e.keyCode === 121 || (e.keyCode >= 112 && e.keyCode <= 135)) {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-        }
-        if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C' || e.key === 'v' || e.key === 'V' || e.key === 'x' || e.key === 'X' || e.keyCode === 67 || e.keyCode === 86 || e.keyCode === 88 || e.keyCode === 45)) {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-        }
-        if (e.shiftKey && (e.key === 'Insert' || e.keyCode === 45)) {
-            e.preventDefault();
-            e.stopPropagation();
-            return false;
-        }
-    }, true);
-    window.addEventListener('copy', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-    }, true);
-    window.addEventListener('cut', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-    }, true);
-    window.addEventListener('paste', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
-    }, true);
-
-    try {
-        const origGetAttr = Element.prototype.getAttribute;
-        Element.prototype.getAttribute = function(name) {
-            if (name === 'data-is-exambrowser' && this && this.id === 'cbt-anti-cheat-root') {
-                return '1';
-            }
-            return origGetAttr.apply(this, arguments);
-        };
-    } catch(e) {}
-
-    try {
-        const fsElemGetter = {
-            get: function() { return document.documentElement; },
-            configurable: true
-        };
-        Object.defineProperty(document, 'fullscreenElement', fsElemGetter);
-        Object.defineProperty(document, 'webkitFullscreenElement', fsElemGetter);
-        Object.defineProperty(document, 'mozFullScreenElement', fsElemGetter);
-    } catch(e) {}
-
-    try {
-        const resolveFs = function() {
-            try {
-                const evt = new Event('fullscreenchange');
-                document.dispatchEvent(evt);
-            } catch(e) {}
-            return Promise.resolve();
-        };
-        Element.prototype.requestFullscreen = resolveFs;
-        Element.prototype.webkitRequestFullscreen = resolveFs;
-        Element.prototype.mozRequestFullScreen = resolveFs;
-        Element.prototype.msRequestFullscreen = resolveFs;
-    } catch(e) {}
-
-    function dismissFullscreenGate() {
-        const root = document.getElementById('cbt-anti-cheat-root');
-        if (root) {
-            root.setAttribute('data-is-exambrowser', '1');
-        }
-        const gate = document.getElementById('anti-cheat-fullscreen-gate');
-        if (gate) {
-            gate.classList.add('hidden');
-            gate.classList.remove('flex');
-            gate.style.display = 'none';
-        }
-    }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', dismissFullscreenGate);
-    } else {
-        dismissFullscreenGate();
-    }
-    setInterval(dismissFullscreenGate, 500);
-
-    // Intercept fetch untuk toleransi jaringan putus sementara dan auto-retry penyimpanan jawaban
-    try {
-        const origFetch = window.fetch;
-        window.fetch = async function(input, init) {
-            const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-
-            // 1. Intercept pelaporan pelanggaran saat jaringan tidak stabil atau aksi salin/tempel tanpa pelanggaran
-            if (url.includes('/violation')) {
-                try {
-                    if (init && init.body && typeof init.body === 'string') {
-                        const parsed = JSON.parse(init.body);
-                        const vt = parsed.violation_type || parsed.type || '';
-                        if (vt === 'copy' || vt === 'paste' || vt === 'cut' || vt === 'clipboard') {
-                            return new Response(JSON.stringify({
-                                action: 'ignored',
-                                message: 'Kombinasi Ctrl+C / Ctrl+V dinonaktifkan tanpa pelanggaran.',
-                                is_locked: false
-                            }), {
-                                status: 200,
-                                headers: { 'Content-Type': 'application/json' }
-                            });
-                        }
-                    }
-                } catch(e) {}
-
-                const now = Date.now();
-                const isUnstable = (typeof navigator !== 'undefined' && !navigator.onLine) ||
-                                   window.__louisvox_suppress_blur === true ||
-                                   window.__louisvox_network_unstable === true ||
-                                   (now - (window.__cbt_last_unstable_time || 0) < 15000);
-
-                if (isUnstable) {
-                    let isSensitive = true;
-                    try {
-                        if (init && init.body) {
-                            const parsed = JSON.parse(init.body);
-                            const vt = parsed.violation_type;
-                            if (vt === 'severe_unpin' || parsed.metadata?.is_unpin) {
-                                isSensitive = false;
-                            }
-                        }
-                    } catch(e) {}
-
-                    if (isSensitive) {
-                        return new Response(JSON.stringify({
-                            action: 'ignored',
-                            message: 'Toleransi jaringan tidak stabil / putus sementara aktif.',
-                            is_locked: false
-                        }), {
-                            status: 200,
-                            headers: { 'Content-Type': 'application/json' }
-                        });
-                    }
-                }
-            }
-
-            // 2. Proteksi penyimpanan jawaban: auto-retry jika gagal karena gangguan koneksi
-            if (url.includes('/answer')) {
-                try {
-                    return await origFetch.apply(this, arguments);
-                } catch (err) {
-                    window.__louisvox_network_unstable = true;
-                    window.__cbt_last_unstable_time = Date.now();
-                    const retryArgs = arguments;
-                    setTimeout(async () => {
-                        for (let attempt = 0; attempt < 5; attempt++) {
-                            try {
-                                await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
-                                await origFetch.apply(window, retryArgs);
-                                break;
-                            } catch(re) {}
-                        }
-                    }, 1000);
-                    throw err;
-                }
-            }
-
-            return origFetch.apply(this, arguments);
-        };
-    } catch(e) {}
-
-    window.LouisVoxExamApp = {
-        onWebExamConfig: function(maxStrikes, strikes, isLocked) {
-            try {
-                window.chrome.webview.postMessage(JSON.stringify({
-                    handler: 'CBT_CONFIG',
-                    maxStrikes: maxStrikes,
-                    strikes: strikes,
-                    isLocked: isLocked
-                }));
-            } catch (e) {}
-        },
-        onWebViolationRecorded: function(type, strikes, maxStrikes, message, isLocked) {
-            try {
-                window.chrome.webview.postMessage(JSON.stringify({
-                    handler: 'CBT_VIOLATION',
-                    type: type,
-                    strikes: strikes,
-                    maxStrikes: maxStrikes,
-                    message: message,
-                    isLocked: isLocked
-                }));
-            } catch (e) {}
-        },
-        isAlarmOverlayActive: function() {
-            const now = Date.now();
-            const isRecentUnstable = (now - (window.__cbt_last_unstable_time || 0)) < 15000;
-            const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
-            return window.__exambro_overlay_active === true ||
-                   window.__cbt_lightbox_active === true ||
-                   window.__louisvox_suppress_blur === true ||
-                   window.__louisvox_network_unstable === true ||
-                   isRecentUnstable ||
-                   isOffline;
-        },
-        setLightboxActive: function(active) {
-            window.__cbt_lightbox_active = !!active;
-        },
-        onWebSessionUnlocked: function(strikes) {
-            try {
-                window.chrome.webview.postMessage(JSON.stringify({
-                    handler: 'CBT_UNLOCKED',
-                    strikes: strikes
-                }));
-            } catch (e) {}
-        },
-        onExamFinished: function() {
-            try {
-                window.chrome.webview.postMessage(JSON.stringify({
-                    handler: 'CBT_FINISHED'
-                }));
-            } catch (e) {}
-        }
-    };
-
-    try {
-        window.close = function() {
-            try {
-                window.chrome.webview.postMessage(JSON.stringify({
-                    handler: 'CBT_FINISHED'
-                }));
-            } catch (e) {}
-        };
-    } catch (e) {}
-})();
-";
+        string bridgeScript = GetCbtBridgeScript();
         await webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(bridgeScript);
         Log.Information("Injected LouisVoxExamApp JavaScript bridge for projectCBT with high network tolerance.");
     }
@@ -961,7 +725,6 @@ public partial class ExamWindow : Window
                             Dispatcher.Invoke(() =>
                             {
                                 lockScreen.RemoteUnlock();
-                                OnLockScreenUnlocked();
                             });
                             break;
 
@@ -982,34 +745,45 @@ public partial class ExamWindow : Window
         }
     }
 
-    private void SetWebOverlayActive(bool active)
+    private void ExecuteWebScriptSafe(string js)
     {
+        if (_isClosingCleanly) return;
+
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(() => ExecuteWebScriptSafe(js));
+            return;
+        }
+
         try
         {
-            string js = active
-                ? "window.__exambro_overlay_active = true; window.__louisvox_suppress_blur = true;"
-                : "window.__exambro_overlay_active = false; window.__louisvox_suppress_blur = false;";
-            _ = webView.CoreWebView2?.ExecuteScriptAsync(js);
+            if (_isClosingCleanly || webView?.CoreWebView2 == null)
+            {
+                return;
+            }
+
+            _ = webView.CoreWebView2.ExecuteScriptAsync(js);
         }
-        catch
+        catch (Exception ex)
         {
-            // best effort
+            Log.Debug(ex, "ExecuteScriptAsync skipped or failed");
         }
+    }
+
+    private void SetWebOverlayActive(bool active)
+    {
+        string js = active
+            ? "window.__exambro_overlay_active = true; window.__louisvox_suppress_blur = true;"
+            : "window.__exambro_overlay_active = false; window.__louisvox_suppress_blur = false;";
+        ExecuteWebScriptSafe(js);
     }
 
     private void SetWebNetworkTolerance(bool active)
     {
-        try
-        {
-            string js = active
-                ? "window.__louisvox_network_unstable = true; window.__louisvox_suppress_blur = true; window.__cbt_last_unstable_time = Date.now();"
-                : "window.__louisvox_network_unstable = false;";
-            _ = webView.CoreWebView2?.ExecuteScriptAsync(js);
-        }
-        catch
-        {
-            // best effort
-        }
+        string js = active
+            ? "window.__louisvox_network_unstable = true; window.__louisvox_suppress_blur = true; window.__cbt_last_unstable_time = Date.now();"
+            : "window.__louisvox_network_unstable = false;";
+        ExecuteWebScriptSafe(js);
     }
 
     private static void CleanupStaleWebView2Locks(string dataFolder)
@@ -1046,31 +820,17 @@ public partial class ExamWindow : Window
 
     private void NotifyWebAntiCheatViolation(string type, string reason)
     {
-        try
-        {
-            string typeJson = System.Text.Json.JsonSerializer.Serialize(type ?? string.Empty);
-            string reasonJson = System.Text.Json.JsonSerializer.Serialize(reason ?? string.Empty);
-            string js = $"if (typeof window.__cbtReportViolation === 'function') {{ window.__cbtReportViolation({typeJson}, {{ reason: {reasonJson} }}); }}";
-            _ = webView.CoreWebView2?.ExecuteScriptAsync(js);
-        }
-        catch
-        {
-            // best effort
-        }
+        string typeJson = System.Text.Json.JsonSerializer.Serialize(type ?? string.Empty);
+        string reasonJson = System.Text.Json.JsonSerializer.Serialize(reason ?? string.Empty);
+        string js = $"if (typeof window.__cbtReportViolation === 'function') {{ window.__cbtReportViolation({typeJson}, {{ reason: {reasonJson} }}); }}";
+        ExecuteWebScriptSafe(js);
     }
 
     private void NotifyWebAntiCheatSevereViolation(string reason)
     {
-        try
-        {
-            string reasonJson = System.Text.Json.JsonSerializer.Serialize(reason ?? string.Empty);
-            string js = $"if (typeof window.__cbtReportSevereViolation === 'function') {{ window.__cbtReportSevereViolation({reasonJson}); }}";
-            _ = webView.CoreWebView2?.ExecuteScriptAsync(js);
-        }
-        catch
-        {
-            // best effort
-        }
+        string reasonJson = System.Text.Json.JsonSerializer.Serialize(reason ?? string.Empty);
+        string js = $"if (typeof window.__cbtReportSevereViolation === 'function') {{ window.__cbtReportSevereViolation({reasonJson}); }}";
+        ExecuteWebScriptSafe(js);
     }
 
     private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
@@ -1309,6 +1069,7 @@ public partial class ExamWindow : Window
 
     private const int WM_QUERYENDSESSION = 0x0011;
     private const int WM_ENDSESSION = 0x0016;
+    private const int WM_DISPLAYCHANGE = 0x007E;
     private const int WM_SYSCOMMAND = 0x0112;
     private const int SC_KEYMENU = 0xF100;
     private const int WM_APPCOMMAND = 0x0319;
@@ -1319,28 +1080,43 @@ public partial class ExamWindow : Window
 
     private void OnApplicationSessionEnding(object sender, SessionEndingCancelEventArgs e)
     {
-        Log.Information("Windows SessionEnding received ({Reason}). Disengaging kiosk lockdown to allow normal OS shutdown.", e.ReasonSessionEnding);
-        _isClosingCleanly = true;
-        _focusGuard?.SetSuspended(true);
-        _keyboardHook?.SetSuspended(true);
-        try { _kioskLock?.Disengage(); } catch { }
+        // Do NOT disengage kiosk here: WPF raises SessionEnding during WM_QUERYENDSESSION, which can still be canceled.
+        // Actual disengagement happens only when WM_ENDSESSION confirms wParam != 0.
+        Log.Information("Windows SessionEnding query received ({Reason}). Waiting for confirmed WM_ENDSESSION.", e.ReasonSessionEnding);
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        // 0. Allow Windows shutdown/restart/logoff (WM_QUERYENDSESSION / WM_ENDSESSION) to proceed cleanly
-        if (msg == WM_QUERYENDSESSION || msg == WM_ENDSESSION)
+        // 0. Allow Windows shutdown/restart/logoff query, but disengage kiosk ONLY on confirmed WM_ENDSESSION (wParam != 0)
+        if (msg == WM_QUERYENDSESSION)
         {
-            _isClosingCleanly = true;
-            _focusGuard?.SetSuspended(true);
-            _keyboardHook?.SetSuspended(true);
-            try { _kioskLock?.Disengage(); } catch { }
-            if (msg == WM_QUERYENDSESSION)
+            handled = true;
+            return (IntPtr)1;
+        }
+        if (msg == WM_ENDSESSION)
+        {
+            if (wParam != IntPtr.Zero)
             {
-                handled = true;
-                return (IntPtr)1;
+                _isClosingCleanly = true;
+                _focusGuard?.SetSuspended(true);
+                _keyboardHook?.SetSuspended(true);
+                try { _kioskLock?.Disengage(); } catch { }
             }
             return IntPtr.Zero;
+        }
+
+        // 0b. Re-evaluate monitor policy when display topology changes mid-exam (e.g. second monitor hotplugged)
+        if (msg == WM_DISPLAYCHANGE && !_isDevSafe && !_isClosingCleanly)
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_isClosingCleanly) return;
+                _screenProtection?.EnforceMonitorPolicy(msgText =>
+                {
+                    _violationManager?.RecordViolation(ViolationEventType.MultiMonitor, msgText);
+                    NotifyWebAntiCheatViolation("multi_monitor", msgText);
+                });
+            });
         }
 
         // 1. Block SC_KEYMENU (system menu / menu bar activation from F10 or Alt)
@@ -1410,7 +1186,7 @@ public partial class ExamWindow : Window
         SetWebOverlayActive(true);
         try
         {
-            var dialog = new ExitDialog(_config)
+            var dialog = new ExitDialog(_config, _exitAttemptTracker)
             {
                 Owner = this,
                 Topmost = true
@@ -1426,10 +1202,13 @@ public partial class ExamWindow : Window
         {
             _isExitDialogOpen = false;
             if (Mouse.Captured != null) Mouse.Capture(null);
-            SetWebOverlayActive(false);
-            _keyboardHook?.SetSuspended(false);
-            _focusGuard?.SetSuspended(false);
-            _focusGuard?.ReclaimFocus();
+            if (!_isClosingCleanly)
+            {
+                SetWebOverlayActive(false);
+                _keyboardHook?.SetSuspended(false);
+                _focusGuard?.SetSuspended(false);
+                _focusGuard?.ReclaimFocus();
+            }
         }
     }
 

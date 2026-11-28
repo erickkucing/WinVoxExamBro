@@ -14,4 +14,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Resources\logo.png" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ExamBro.Tests" />
+  </ItemGroup>
 </Project>

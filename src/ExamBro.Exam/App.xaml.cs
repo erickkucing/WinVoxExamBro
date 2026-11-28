@@ -135,14 +135,17 @@ public partial class App : Application
                 KioskLockService.RestoreFromRecovery();
             }
 
-            LoadConfiguration();
+            if (!LoadConfiguration(out string configSource))
+            {
+                return;
+            }
 
             Serilog.Log.Logger = LoggerSetup.CreateLogger(_config);
             Serilog.Log.Information(
-                "ExamBro application startup. Version: {Version}, PortableMode: {IsPortable}, ConfigPath: {ConfigPath}",
+                "ExamBro application startup. Version: {Version}, PortableMode: {IsPortable}, ConfigSource: {ConfigSource}",
                 Constants.AppVersion,
                 Constants.IsPortableMode,
-                Constants.ConfigFilePath);
+                configSource);
 
 #if !DEBUG
             if (devSafeRequested && !_config!.Security.DevSafeAllowedInRelease)
@@ -184,65 +187,44 @@ public partial class App : Application
         }
     }
 
-    private bool LoadConfiguration()
+    private bool LoadConfiguration(out string configSource)
     {
-        var candidates = Constants.GetCandidateConfigPaths();
+        string? currentExe = EmbeddedConfigHelper.ResolveCurrentExecutablePath();
+        var (loaded, source, rawBytes) = EmbeddedConfigHelper.ResolveConfig(
+            targetExePath: currentExe,
+            appDirectory: Constants.AppDirectory);
 
-        if (candidates.Count == 0)
+        if (loaded != null)
         {
-            string configPath = Constants.ConfigFilePath;
-            Serilog.Log.Information("Config file not found at {Path}. Generating default configuration.", configPath);
-            _config = ExamConfig.CreateDefault();
-            try
+            _config = loaded;
+            configSource = source;
+
+            // Heal an existing sibling exambro.cfg if the embedded payload inside the .exe is newer
+            if (source.StartsWith("Embedded:", StringComparison.Ordinal) &&
+                File.Exists(Constants.PortableConfigPath) &&
+                rawBytes != null)
             {
-                byte[] encrypted = ConfigEncryption.EncryptPortableConfig(_config);
-                AtomicFileWriter.WriteAllBytesFlushed(Constants.PortableConfigPath, encrypted);
-                Serilog.Log.Information("Saved default portable config to {Path}", Constants.PortableConfigPath);
+                try
+                {
+                    AtomicFileWriter.WriteAllBytesFlushed(Constants.PortableConfigPath, rawBytes);
+                    Serilog.Log.Information("Synchronized sibling exambro.cfg with newer embedded configuration");
+                }
+                catch { }
             }
-            catch (Exception ex)
-            {
-                Serilog.Log.Warning(ex, "Could not persist default configuration to disk");
-            }
+
             return true;
         }
 
-        foreach (string candidatePath in candidates)
-        {
-            try
-            {
-                byte[] encryptedBytes = File.ReadAllBytes(candidatePath);
-                if (encryptedBytes.Length == 0)
-                {
-                    Serilog.Log.Warning("Config file at {Path} is empty (0 bytes). Trying next backup candidate...", candidatePath);
-                    continue;
-                }
-
-                var loaded = ConfigEncryption.DecryptConfig(encryptedBytes);
-                if (loaded != null)
-                {
-                    _config = loaded;
-                    // Self-heal primary PortableConfigPath if loaded from a backup candidate after power loss
-                    if (!candidatePath.Equals(Constants.PortableConfigPath, StringComparison.OrdinalIgnoreCase))
-                    {
-                        try
-                        {
-                            AtomicFileWriter.WriteAllBytesFlushed(Constants.PortableConfigPath, encryptedBytes);
-                            Serilog.Log.Information("Restored corrupted primary config from backup {BackupPath}", candidatePath);
-                        }
-                        catch { }
-                    }
-                    return true;
-                }
-            }
-            catch (Exception ex)
-            {
-                Serilog.Log.Warning(ex, "Failed to decrypt config file at {Path}. Trying next candidate...", candidatePath);
-            }
-        }
-
-        Serilog.Log.Warning("All config candidates failed decryption. Falling back to default configuration.");
-        _config = ExamConfig.CreateDefault();
-        return true;
+        configSource = "None";
+        Serilog.Log.Error("No valid embedded or local configuration found in {AppDir}", Constants.AppDirectory);
+        MessageBox.Show(
+            "Konfigurasi ujian belum diatur atau berkas konfigurasi rusak.\n\n" +
+            "Pastikan Anda menjalankan aplikasi ujian yang telah dikonfigurasi oleh pengawas, atau ekstrak seluruh isi paket ZIP ujian terlebih dahulu.",
+            Constants.AppName,
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
+        Shutdown(1);
+        return false;
     }
 
     private static bool DebuggerCheck()
@@ -270,8 +252,9 @@ public partial class App : Application
 
         SessionEnding += (s, args) =>
         {
+            // WPF raises SessionEnding during WM_QUERYENDSESSION before shutdown is confirmed;
+            // ExamWindow.WndProc disengages cleanly upon WM_ENDSESSION with wParam != 0.
             WriteEmergencyCrashLog("SessionEnding", null);
-            KioskLockService.RestoreFromRecovery();
         };
     }
 

@@ -19,7 +19,7 @@ public class ClipboardService : IDisposable
     private readonly bool _allowClipboard;
     private bool _isListening;
     private bool _isClearing;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     public event Action? ClipboardViolationDetected;
 
@@ -118,6 +118,23 @@ public class ClipboardService : IDisposable
         }
     }
 
+    private static bool TryClearClipboardOnce()
+    {
+        if (OpenClipboard(IntPtr.Zero))
+        {
+            try
+            {
+                EmptyClipboard();
+                return true;
+            }
+            finally
+            {
+                CloseClipboard();
+            }
+        }
+        return false;
+    }
+
     /// <summary>
     /// Clears the Windows system clipboard defensively, retrying if the clipboard is temporarily locked.
     /// </summary>
@@ -126,17 +143,9 @@ public class ClipboardService : IDisposable
         const int maxRetries = 5;
         for (int i = 0; i < maxRetries; i++)
         {
-            if (OpenClipboard(IntPtr.Zero))
+            if (TryClearClipboardOnce())
             {
-                try
-                {
-                    EmptyClipboard();
-                    return true;
-                }
-                finally
-                {
-                    CloseClipboard();
-                }
+                return true;
             }
             Thread.Sleep(50);
         }
@@ -147,10 +156,11 @@ public class ClipboardService : IDisposable
 
     /// <summary>
     /// Window procedure hook to capture WM_CLIPBOARDUPDATE.
+    /// Avoids blocking the UI message pump if clipboard is momentarily locked.
     /// </summary>
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (msg == WM_CLIPBOARDUPDATE && !_allowClipboard)
+        if (msg == WM_CLIPBOARDUPDATE && !_allowClipboard && !_disposed)
         {
             if (_isClearing)
             {
@@ -161,7 +171,10 @@ public class ClipboardService : IDisposable
             {
                 _isClearing = true;
                 Log.Warning("Clipboard modification detected while clipboard access is disallowed");
-                ClearClipboard();
+                if (!TryClearClipboardOnce())
+                {
+                    _ = Task.Run(() => ClearClipboard());
+                }
                 ClipboardViolationDetected?.Invoke();
                 handled = true;
             }
@@ -186,21 +199,23 @@ public class ClipboardService : IDisposable
     {
         if (!_disposed)
         {
-            if (_isListening && _windowHandle != IntPtr.Zero)
-            {
-                RemoveClipboardFormatListener(_windowHandle);
-                _isListening = false;
-            }
-
-            _hwndSource?.RemoveHook(WndProc);
-            _hwndSource = null;
-
-            if (!_allowClipboard)
-            {
-                ClearClipboard();
-            }
-
             _disposed = true;
+            if (disposing)
+            {
+                if (_isListening && _windowHandle != IntPtr.Zero)
+                {
+                    RemoveClipboardFormatListener(_windowHandle);
+                    _isListening = false;
+                }
+
+                _hwndSource?.RemoveHook(WndProc);
+                _hwndSource = null;
+
+                if (!_allowClipboard)
+                {
+                    TryClearClipboardOnce();
+                }
+            }
         }
     }
 

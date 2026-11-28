@@ -19,7 +19,7 @@ public class KeyboardHookService : IDisposable
     private IntPtr _hookId = IntPtr.Zero;
     private readonly LowLevelKeyboardProc _hookProc; // Retain reference to prevent GC collection
     private readonly ExamConfig _config;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     // Events
     public event Action<string>? BlockedKeyDetected;
@@ -186,9 +186,12 @@ public class KeyboardHookService : IDisposable
         };
         _watchdogTimer.Tick += (s, e) =>
         {
-            if (_hookId == IntPtr.Zero && !_disposed && !_isSuspended)
+            lock (_hookLock)
             {
-                InstallHookInternal();
+                if (_hookId == IntPtr.Zero && !_disposed && !_isSuspended)
+                {
+                    InstallHookInternal();
+                }
             }
         };
     }
@@ -200,19 +203,24 @@ public class KeyboardHookService : IDisposable
     {
         lock (_hookLock)
         {
-            if (_hookId != IntPtr.Zero) return;
+            if (_disposed || _hookId != IntPtr.Zero) return;
             InstallHookInternal();
             _watchdogTimer.Start();
         }
     }
 
-    private void InstallHookInternal()
+    private IntPtr CreateHookHandle()
     {
         using var curProcess = Process.GetCurrentProcess();
         using var curModule = curProcess.MainModule;
         IntPtr moduleHandle = curModule?.ModuleName != null ? GetModuleHandle(curModule.ModuleName) : IntPtr.Zero;
+        return SetWindowsHookEx(WH_KEYBOARD_LL, _hookProc, moduleHandle, 0);
+    }
 
-        _hookId = SetWindowsHookEx(WH_KEYBOARD_LL, _hookProc, moduleHandle, 0);
+    private void InstallHookInternal()
+    {
+        IntPtr newHook = CreateHookHandle();
+        _hookId = newHook;
 
         if (_hookId == IntPtr.Zero)
         {
@@ -245,7 +253,7 @@ public class KeyboardHookService : IDisposable
 
     /// <summary>
     /// Healthcheck and heartbeat method ensuring the keyboard hook remains attached under all circumstances.
-    /// Safely unhooks and reinstalls SetWindowsHookEx to ensure the hook sits at the head of the system hook chain.
+    /// Installs the replacement hook BEFORE unhooking the previous handle so there is zero unhooked gap.
     /// </summary>
     public void RefreshHook()
     {
@@ -253,12 +261,23 @@ public class KeyboardHookService : IDisposable
 
         lock (_hookLock)
         {
-            if (_hookId != IntPtr.Zero)
+            if (_disposed || _isSuspended) return;
+
+            IntPtr oldHook = _hookId;
+            IntPtr newHook = CreateHookHandle();
+            if (newHook != IntPtr.Zero)
             {
-                UnhookWindowsHookEx(_hookId);
-                _hookId = IntPtr.Zero;
+                _hookId = newHook;
+                if (oldHook != IntPtr.Zero)
+                {
+                    UnhookWindowsHookEx(oldHook);
+                }
             }
-            InstallHookInternal();
+            else if (oldHook == IntPtr.Zero)
+            {
+                int errorCode = Marshal.GetLastWin32Error();
+                Log.Error("Failed to refresh low-level keyboard hook. Error code: {ErrorCode}", errorCode);
+            }
         }
     }
 
@@ -767,8 +786,22 @@ public class KeyboardHookService : IDisposable
     {
         if (!_disposed)
         {
-            Stop();
             _disposed = true;
+            if (disposing)
+            {
+                Stop();
+            }
+            else
+            {
+                lock (_hookLock)
+                {
+                    if (_hookId != IntPtr.Zero)
+                    {
+                        UnhookWindowsHookEx(_hookId);
+                        _hookId = IntPtr.Zero;
+                    }
+                }
+            }
         }
     }
 

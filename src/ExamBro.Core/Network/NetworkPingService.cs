@@ -12,8 +12,10 @@ public class NetworkPingService : IDisposable
 {
     private readonly NetworkTolerancePolicy _tolerancePolicy;
     private readonly Func<string, int, CancellationToken, Task<long>>? _customProbe;
-    private bool _isRunning;
-    private bool _disposed;
+    private readonly object _lifecycleLock = new();
+    private CancellationTokenSource? _cts;
+    private volatile bool _isRunning;
+    private volatile bool _disposed;
     private int _isPinging;
 
     public string TargetHost { get; set; } = "127.0.0.1";
@@ -48,6 +50,11 @@ public class NetworkPingService : IDisposable
 
     public async Task<PingStatus> MeasureOnceAsync(CancellationToken cancellationToken = default)
     {
+        if (_disposed || cancellationToken.IsCancellationRequested)
+        {
+            return PingStatus.Disconnected();
+        }
+
         long rtt;
         if (_customProbe != null)
         {
@@ -66,8 +73,16 @@ public class NetworkPingService : IDisposable
         }
 
         var status = PingStatus.Create(rtt);
+        if (_disposed || cancellationToken.IsCancellationRequested)
+        {
+            return status;
+        }
+
         _tolerancePolicy.RecordPing(status);
-        PingUpdated?.Invoke(status);
+        if (!_disposed && !cancellationToken.IsCancellationRequested)
+        {
+            PingUpdated?.Invoke(status);
+        }
         return status;
     }
 
@@ -112,18 +127,25 @@ public class NetworkPingService : IDisposable
 
     public void Start()
     {
-        if (_isRunning) return;
-        _isRunning = true;
+        CancellationToken ct;
+        lock (_lifecycleLock)
+        {
+            if (_isRunning || _disposed) return;
+            _cts?.Dispose();
+            _cts = new CancellationTokenSource();
+            ct = _cts.Token;
+            _isRunning = true;
+        }
 
         Task.Run(async () =>
         {
-            while (_isRunning && !_disposed)
+            while (_isRunning && !_disposed && !ct.IsCancellationRequested)
             {
                 if (Interlocked.CompareExchange(ref _isPinging, 1, 0) == 0)
                 {
                     try
                     {
-                        await MeasureOnceAsync();
+                        await MeasureOnceAsync(ct);
                     }
                     catch { }
                     finally
@@ -134,24 +156,40 @@ public class NetworkPingService : IDisposable
 
                 try
                 {
-                    await Task.Delay(Interval);
+                    await Task.Delay(Interval, ct);
                 }
                 catch { break; }
             }
-        });
+        }, ct);
     }
 
     public void Stop()
     {
-        _isRunning = false;
+        lock (_lifecycleLock)
+        {
+            _isRunning = false;
+            if (_cts != null)
+            {
+                try { _cts.Cancel(); } catch { }
+                try { _cts.Dispose(); } catch { }
+                _cts = null;
+            }
+        }
     }
 
     public void Dispose()
     {
-        if (!_disposed)
+        lock (_lifecycleLock)
         {
-            Stop();
+            if (_disposed) return;
             _disposed = true;
+            _isRunning = false;
+            if (_cts != null)
+            {
+                try { _cts.Cancel(); } catch { }
+                try { _cts.Dispose(); } catch { }
+                _cts = null;
+            }
         }
         GC.SuppressFinalize(this);
     }

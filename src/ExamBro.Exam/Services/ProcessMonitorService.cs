@@ -22,7 +22,7 @@ public class ProcessMonitorService : IDisposable
     private readonly int _currentPid;
     private readonly int _currentSessionId;
     private int _isScanning;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     private static readonly HashSet<string> BackgroundSafeWindowsTools = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -113,8 +113,9 @@ public class ProcessMonitorService : IDisposable
     /// </summary>
     public void Start()
     {
+        if (_disposed) return;
         Log.Information("Starting ProcessMonitorService with {BlacklistCount} blacklisted signatures", _blacklist.Count);
-        _timer.Change(0, 1500);
+        try { _timer.Change(0, 1500); } catch (ObjectDisposedException) { }
     }
 
     /// <summary>
@@ -122,20 +123,24 @@ public class ProcessMonitorService : IDisposable
     /// </summary>
     public void Stop()
     {
-        _timer.Change(Timeout.Infinite, Timeout.Infinite);
+        if (_disposed) return;
+        try { _timer.Change(Timeout.Infinite, Timeout.Infinite); } catch (ObjectDisposedException) { }
         Log.Information("ProcessMonitorService stopped");
     }
 
     private void OnTimerTick(object? state)
     {
-        if (Interlocked.CompareExchange(ref _isScanning, 1, 0) != 0)
+        if (_disposed || Interlocked.CompareExchange(ref _isScanning, 1, 0) != 0)
         {
             return;
         }
 
         try
         {
-            ScanProcesses();
+            if (!_disposed)
+            {
+                ScanProcesses();
+            }
         }
         finally
         {
@@ -317,6 +322,7 @@ public class ProcessMonitorService : IDisposable
 
     private void ScanProcesses()
     {
+        if (_disposed) return;
         try
         {
             var childPids = GetDescendantPids(_currentPid);
@@ -326,6 +332,7 @@ public class ProcessMonitorService : IDisposable
             {
                 try
                 {
+                    if (_disposed) continue;
                     int pid = proc.Id;
                     if (pid == _currentPid) continue;
 
@@ -357,7 +364,10 @@ public class ProcessMonitorService : IDisposable
                             }
                         }
 
-                        BlockedProcessDetected?.Invoke(rawName, pid);
+                        if (!_disposed)
+                        {
+                            BlockedProcessDetected?.Invoke(rawName, pid);
+                        }
                     }
                 }
                 catch
@@ -539,9 +549,12 @@ public class ProcessMonitorService : IDisposable
     {
         if (!_disposed)
         {
-            Stop();
-            _timer.Dispose();
             _disposed = true;
+            if (disposing)
+            {
+                try { _timer.Change(Timeout.Infinite, Timeout.Infinite); } catch (ObjectDisposedException) { }
+                _timer.Dispose();
+            }
         }
     }
 

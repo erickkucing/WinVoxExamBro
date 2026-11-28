@@ -12,21 +12,23 @@ namespace ExamBro.Exam.Views;
 /// <summary>
 /// Interaction logic for ExitDialog.xaml.
 /// Modal dialog prompting the proctor for an authorization password before permitting
-/// premature termination of the exam kiosk session.
+/// premature termination of the exam kiosk session. Uses session-scoped attempt tracking
+/// so canceling and reopening the dialog cannot reset lockout counters.
 /// </summary>
 public partial class ExitDialog : Window
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<ExitDialog>();
 
     private readonly ExamConfig _config;
-    private int _failedAttempts;
+    private readonly PasswordAttemptTracker _attemptTracker;
     private int _lockoutSecondsRemaining;
     private readonly DispatcherTimer _lockoutTimer;
 
-    public ExitDialog(ExamConfig config)
+    public ExitDialog(ExamConfig config, PasswordAttemptTracker? attemptTracker = null)
     {
         InitializeComponent();
         _config = config;
+        _attemptTracker = attemptTracker ?? new PasswordAttemptTracker();
 
         byte[] logoBytes = BrandingHelper.ResolveLogoBytes(_config.General.LogoBase64, _config.General.LogoPath);
         var logoImage = ImageHelper.CreateImageSource(logoBytes);
@@ -41,7 +43,18 @@ public partial class ExitDialog : Window
         };
         _lockoutTimer.Tick += OnLockoutTick;
 
-        Loaded += (s, e) => pwdExit.Focus();
+        Loaded += (_, _) =>
+        {
+            if (_attemptTracker.IsLockedOut(out int remaining))
+            {
+                ApplyLockoutUi(remaining);
+            }
+            else
+            {
+                pwdExit.Focus();
+            }
+        };
+        Closing += (_, _) => _lockoutTimer.Stop();
     }
 
     private void PwdExit_KeyDown(object sender, KeyEventArgs e)
@@ -65,8 +78,9 @@ public partial class ExitDialog : Window
 
     private void AttemptExit()
     {
-        if (_lockoutSecondsRemaining > 0)
+        if (_attemptTracker.IsLockedOut(out int activeRemaining))
         {
+            ApplyLockoutUi(activeRemaining);
             return;
         }
 
@@ -79,7 +93,6 @@ public partial class ExitDialog : Window
 
         bool isValid = false;
 
-        // Verify against Proctor Password
         if (!string.IsNullOrEmpty(_config.Admin.ProctorPasswordHash) &&
             !string.IsNullOrEmpty(_config.Admin.ProctorPasswordSalt))
         {
@@ -89,7 +102,6 @@ public partial class ExitDialog : Window
                 _config.Admin.ProctorPasswordSalt);
         }
 
-        // Verify against Admin Password
         if (!isValid &&
             !string.IsNullOrEmpty(_config.Admin.AdminPasswordHash) &&
             !string.IsNullOrEmpty(_config.Admin.AdminPasswordSalt))
@@ -100,7 +112,6 @@ public partial class ExitDialog : Window
                 _config.Admin.AdminPasswordSalt);
         }
 
-        // Development fallback
         if (!isValid && string.IsNullOrEmpty(_config.Admin.ProctorPasswordHash) &&
             string.IsNullOrEmpty(_config.Admin.AdminPasswordHash))
         {
@@ -109,21 +120,25 @@ public partial class ExitDialog : Window
 
         if (isValid)
         {
+            _attemptTracker.Reset();
             Log.Information("Proctor authorized exam exit");
             DialogResult = true;
             Close();
         }
         else
         {
-            _failedAttempts++;
             int maxAttempts = _config.Admin.MaxPasswordAttempts > 0 ? _config.Admin.MaxPasswordAttempts : 5;
-            int remaining = maxAttempts - _failedAttempts;
+            int remaining = _attemptTracker.RegisterFailedAttempt(
+                _config.Admin.MaxPasswordAttempts,
+                _config.Admin.PasswordLockoutSeconds,
+                out bool triggeredLockout,
+                out int lockoutSeconds);
 
-            Log.Warning("Proctor exit attempt failed. ({Attempt}/{Max})", _failedAttempts, maxAttempts);
+            Log.Warning("Proctor exit attempt failed. ({Attempt}/{Max})", _attemptTracker.FailedAttempts, maxAttempts);
 
-            if (remaining <= 0)
+            if (triggeredLockout)
             {
-                TriggerLockout();
+                ApplyLockoutUi(lockoutSeconds);
             }
             else
             {
@@ -134,10 +149,9 @@ public partial class ExitDialog : Window
         }
     }
 
-    private void TriggerLockout()
+    private void ApplyLockoutUi(int remainingSeconds)
     {
-        int lockoutSeconds = _config.Admin.PasswordLockoutSeconds > 0 ? _config.Admin.PasswordLockoutSeconds : 30;
-        _lockoutSecondsRemaining = lockoutSeconds;
+        _lockoutSecondsRemaining = Math.Max(1, remainingSeconds);
 
         btnConfirmExit.IsEnabled = false;
         pwdExit.IsEnabled = false;
@@ -147,16 +161,15 @@ public partial class ExitDialog : Window
         txtLockout.Visibility = Visibility.Visible;
         txtLockout.Text = $"Terlalu banyak percobaan gagal. Silakan tunggu {_lockoutSecondsRemaining} detik.";
 
+        _lockoutTimer.Stop();
         _lockoutTimer.Start();
     }
 
     private void OnLockoutTick(object? sender, EventArgs e)
     {
-        _lockoutSecondsRemaining--;
-        if (_lockoutSecondsRemaining <= 0)
+        if (!_attemptTracker.IsLockedOut(out int trackerRemaining))
         {
             _lockoutTimer.Stop();
-            _failedAttempts = 0;
 
             btnConfirmExit.IsEnabled = true;
             pwdExit.IsEnabled = true;
@@ -167,6 +180,7 @@ public partial class ExitDialog : Window
         }
         else
         {
+            _lockoutSecondsRemaining = trackerRemaining;
             txtLockout.Text = $"Terlalu banyak percobaan gagal. Silakan tunggu {_lockoutSecondsRemaining} detik.";
         }
     }

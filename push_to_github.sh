@@ -39,7 +39,7 @@ echo -e "  ${GREEN}✓ Remote origin: ${CYAN}${REMOTE_URL}${NC}"
 
 # 3. Jalankan Pengujian Otomatis
 echo -e "\n${YELLOW}[3/5] Menjalankan Unit Test (.NET 8)...${NC}"
-if dotnet test tests/ExamBro.Tests/ExamBro.Tests.csproj -c Release --verbosity quiet; then
+if dotnet test tests/ExamBro.Tests/ExamBro.Tests.csproj -c Release --filter "Category!=WindowsOnly&Category!=Stress" --verbosity quiet; then
     echo -e "  ${GREEN}✓ Seluruh unit test lolos tanpa kesalahan!${NC}"
 else
     echo -e "  ${RED}✗ Pengujian gagal! Perbaiki error sebelum push.${NC}"

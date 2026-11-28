@@ -23,7 +23,8 @@ public static class UrlMatcher
         if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(pattern))
             return false;
 
-        string trimmedPattern = pattern.Trim();
+        // Collapse repeated wildcards so patterns like *a**b cannot trigger redundant backtracking
+        string trimmedPattern = Regex.Replace(pattern.Trim(), @"\*{2,}", "*");
 
         // 192.168.0.0 local subnet and prefix matching (covers all 192.168.* addresses)
         if (trimmedPattern.Equals("192.168.0.0", StringComparison.OrdinalIgnoreCase) ||
@@ -68,7 +69,18 @@ public static class UrlMatcher
 
         string regexPattern = $"^{escaped}$";
 
-        return Regex.IsMatch(url, regexPattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        try
+        {
+            return Regex.IsMatch(
+                url,
+                regexPattern,
+                RegexOptions.IgnoreCase | RegexOptions.Singleline,
+                TimeSpan.FromMilliseconds(250));
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return false;
+        }
     }
 
     /// <summary>

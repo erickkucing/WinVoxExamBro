@@ -95,8 +95,8 @@ public class RecoveryState
     }
 
     /// <summary>
-    /// Load recovery state from disk. Returns null if the file is missing or corrupt.
-    /// Checks machine-wide ProgramData path first, then user LocalAppData path.
+    /// Load recovery state from disk. Returns null if missing or corrupt.
+    /// Compares <see cref="Timestamp"/> across ProgramData and LocalAppData so the latest snapshot wins.
     /// </summary>
     public static RecoveryState? Load(string? path = null)
     {
@@ -105,8 +105,25 @@ public class RecoveryState
             return TryLoadSingle(path);
         }
 
-        return TryLoadSingle(Constants.SystemRecoveryFilePath)
-               ?? TryLoadSingle(Constants.RecoveryFilePath);
+        return LoadLatest(Constants.SystemRecoveryFilePath, Constants.RecoveryFilePath);
+    }
+
+    /// <summary>
+    /// Loads all readable <see cref="RecoveryState"/> files from <paramref name="paths"/>
+    /// and returns the entry with the newest <see cref="Timestamp"/>.
+    /// </summary>
+    public static RecoveryState? LoadLatest(params string[] paths)
+    {
+        RecoveryState? newest = null;
+        foreach (string candidate in paths)
+        {
+            var loaded = TryLoadSingle(candidate);
+            if (loaded != null && (newest == null || loaded.Timestamp > newest.Timestamp))
+            {
+                newest = loaded;
+            }
+        }
+        return newest;
     }
 
     private static RecoveryState? TryLoadSingle(string filePath)
@@ -189,6 +206,10 @@ public class RecoveryState
         var sb = new StringBuilder();
         sb.AppendLine("# LouisVox ExamBro Self-Contained Emergency Boot/Logon Recovery Script");
         sb.AppendLine("$ErrorActionPreference = 'SilentlyContinue'");
+        sb.AppendLine("# Abort immediately if an active ExamBro session is running (guards against delayed LogonTrigger racing a new exam launch)");
+        sb.AppendLine("$activeExam = Get-Process -Name 'ExamBro.Exam','LouisVox ExamBro' -ErrorAction SilentlyContinue");
+        sb.AppendLine("if ($activeExam) { exit 0 }");
+        sb.AppendLine();
         sb.AppendLine($"$SysRecoveryJson = '{sysJsonPath}'");
         sb.AppendLine($"$UsrRecoveryJson = '{usrJsonPath}'");
         sb.AppendLine($"$TaskName = '{schedTaskName}'");
