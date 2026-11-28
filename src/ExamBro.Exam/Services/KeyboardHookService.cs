@@ -290,6 +290,11 @@ public class KeyboardHookService : IDisposable
 
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
+        if (_disposed)
+        {
+            return CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam);
+        }
+
         if (nCode >= 0)
         {
             if (_isSuspended)
@@ -320,6 +325,7 @@ public class KeyboardHookService : IDisposable
                 {
                     ThreadPool.QueueUserWorkItem(_ =>
                     {
+                        if (_disposed) return;
                         Log.Information("Exit shortcut triggered by user");
                         ExitShortcutRequested?.Invoke();
                     });
@@ -353,6 +359,7 @@ public class KeyboardHookService : IDisposable
                 _lastViolationReason = reason;
                 ThreadPool.QueueUserWorkItem(_ =>
                 {
+                    if (_disposed) return;
                     Log.Warning("Violation key combination detected: {Reason} (VK: 0x{VkCode:X2})", reason, vkCode);
                     BlockedKeyDetected?.Invoke(reason);
                 });

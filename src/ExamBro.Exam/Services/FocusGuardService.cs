@@ -16,11 +16,12 @@ public class FocusGuardService : IDisposable
 
     private IntPtr _targetHwnd = IntPtr.Zero;
     private IntPtr _hookHandle = IntPtr.Zero;
+    private readonly object _hookLock = new();
     private readonly WinEventDelegate _winEventDelegate; // Retain reference to prevent GC collection
     private readonly DispatcherTimer _backupTimer;
     private readonly DispatcherTimer _sasWatchTimer;
-    private bool _suspended;
-    private bool _disposed;
+    private volatile bool _suspended;
+    private volatile bool _disposed;
 
     public event Action? FocusLost;
     public event Action? DesktopSwitched;
@@ -269,27 +270,34 @@ public class FocusGuardService : IDisposable
     /// </summary>
     public void Start(IntPtr targetHwnd)
     {
-        _targetHwnd = targetHwnd;
-        if (_targetHwnd == IntPtr.Zero) return;
+        if (_disposed || targetHwnd == IntPtr.Zero) return;
 
-        // Hook system-wide foreground and desktop changes
-        _hookHandle = SetWinEventHook(
-            EVENT_SYSTEM_FOREGROUND,
-            EVENT_SYSTEM_DESKTOPSWITCH,
-            IntPtr.Zero,
-            _winEventDelegate,
-            0,
-            0,
-            WINEVENT_OUTOFCONTEXT);
+        lock (_hookLock)
+        {
+            if (_disposed) return;
+            _targetHwnd = targetHwnd;
 
-        if (_hookHandle == IntPtr.Zero)
-        {
-            int err = Marshal.GetLastWin32Error();
-            Log.Warning("SetWinEventHook failed with code {ErrorCode}. Relying on backup timer.", err);
-        }
-        else
-        {
-            Log.Information("SetWinEventHook registered successfully for handle 0x{Handle:X}", _targetHwnd.ToInt64());
+            if (_hookHandle == IntPtr.Zero)
+            {
+                _hookHandle = SetWinEventHook(
+                    EVENT_SYSTEM_FOREGROUND,
+                    EVENT_SYSTEM_DESKTOPSWITCH,
+                    IntPtr.Zero,
+                    _winEventDelegate,
+                    0,
+                    0,
+                    WINEVENT_OUTOFCONTEXT);
+
+                if (_hookHandle == IntPtr.Zero)
+                {
+                    int err = Marshal.GetLastWin32Error();
+                    Log.Warning("SetWinEventHook failed with code {ErrorCode}. Relying on backup timer.", err);
+                }
+                else
+                {
+                    Log.Information("SetWinEventHook registered successfully for handle 0x{Handle:X}", _targetHwnd.ToInt64());
+                }
+            }
         }
 
         _backupTimer.Start();
@@ -304,13 +312,15 @@ public class FocusGuardService : IDisposable
         _backupTimer.Stop();
         _sasWatchTimer.Stop();
 
-        if (_hookHandle != IntPtr.Zero)
+        lock (_hookLock)
         {
-            UnhookWinEvent(_hookHandle);
-            _hookHandle = IntPtr.Zero;
+            if (_hookHandle != IntPtr.Zero)
+            {
+                UnhookWinEvent(_hookHandle);
+                _hookHandle = IntPtr.Zero;
+            }
+            _targetHwnd = IntPtr.Zero;
         }
-
-        _targetHwnd = IntPtr.Zero;
     }
 
     /// <summary>
@@ -480,7 +490,7 @@ public class FocusGuardService : IDisposable
 
     private void OnBackupTimerTick(object? sender, EventArgs e)
     {
-        if (_suspended || _targetHwnd == IntPtr.Zero) return;
+        if (_disposed || _suspended || _targetHwnd == IntPtr.Zero) return;
 
         IntPtr currentFore = GetForegroundWindow();
         if (currentFore == IntPtr.Zero || IsOurWindow(currentFore))
@@ -500,7 +510,7 @@ public class FocusGuardService : IDisposable
 
     private void OnSasWatchTimerTick(object? sender, EventArgs e)
     {
-        if (_suspended || _targetHwnd == IntPtr.Zero || !RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (_disposed || _suspended || _targetHwnd == IntPtr.Zero || !RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             return;
 
         try
@@ -748,7 +758,7 @@ public class FocusGuardService : IDisposable
     /// </summary>
     public void ReclaimFocus()
     {
-        if (_targetHwnd == IntPtr.Zero || _suspended) return;
+        if (_disposed || _suspended || _targetHwnd == IntPtr.Zero) return;
 
         try
         {
@@ -790,10 +800,25 @@ public class FocusGuardService : IDisposable
 
     protected virtual void Dispose(bool disposing)
     {
-        if (!_disposed)
+        if (_disposed) return;
+        _disposed = true;
+
+        if (disposing)
         {
             Stop();
-            _disposed = true;
+        }
+        else
+        {
+            // Never touch DispatcherTimer from GC finalizer thread; only release native hook handle
+            lock (_hookLock)
+            {
+                if (_hookHandle != IntPtr.Zero)
+                {
+                    UnhookWinEvent(_hookHandle);
+                    _hookHandle = IntPtr.Zero;
+                }
+                _targetHwnd = IntPtr.Zero;
+            }
         }
     }
 

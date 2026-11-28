@@ -20,6 +20,8 @@ public class ClipboardService : IDisposable
     private bool _isListening;
     private bool _isClearing;
     private volatile bool _disposed;
+    private static uint _lastSelfClearedSeq;
+    private int _asyncClearRunning;
 
     public event Action? ClipboardViolationDetected;
 
@@ -73,6 +75,9 @@ public class ClipboardService : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
 
+    [DllImport("user32.dll")]
+    private static extern uint GetClipboardSequenceNumber();
+
     // Constants
 
     /// <summary>
@@ -125,6 +130,7 @@ public class ClipboardService : IDisposable
             try
             {
                 EmptyClipboard();
+                Volatile.Write(ref _lastSelfClearedSeq, GetClipboardSequenceNumber());
                 return true;
             }
             finally
@@ -156,14 +162,16 @@ public class ClipboardService : IDisposable
 
     /// <summary>
     /// Window procedure hook to capture WM_CLIPBOARDUPDATE.
-    /// Avoids blocking the UI message pump if clipboard is momentarily locked.
+    /// Ignores self-triggered sequence updates and avoids blocking the UI message pump.
     /// </summary>
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         if (msg == WM_CLIPBOARDUPDATE && !_allowClipboard && !_disposed)
         {
-            if (_isClearing)
+            uint currentSeq = GetClipboardSequenceNumber();
+            if (_isClearing || (currentSeq != 0 && currentSeq == Volatile.Read(ref _lastSelfClearedSeq)))
             {
+                handled = true;
                 return IntPtr.Zero;
             }
 
@@ -171,9 +179,19 @@ public class ClipboardService : IDisposable
             {
                 _isClearing = true;
                 Log.Warning("Clipboard modification detected while clipboard access is disallowed");
-                if (!TryClearClipboardOnce())
+                if (!TryClearClipboardOnce() && Interlocked.CompareExchange(ref _asyncClearRunning, 1, 0) == 0)
                 {
-                    _ = Task.Run(() => ClearClipboard());
+                    _ = Task.Run(() =>
+                    {
+                        try
+                        {
+                            if (!_disposed) ClearClipboard();
+                        }
+                        finally
+                        {
+                            Interlocked.Exchange(ref _asyncClearRunning, 0);
+                        }
+                    });
                 }
                 ClipboardViolationDetected?.Invoke();
                 handled = true;

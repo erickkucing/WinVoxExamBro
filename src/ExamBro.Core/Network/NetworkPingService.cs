@@ -13,13 +13,26 @@ public class NetworkPingService : IDisposable
     private readonly NetworkTolerancePolicy _tolerancePolicy;
     private readonly Func<string, int, CancellationToken, Task<long>>? _customProbe;
     private readonly object _lifecycleLock = new();
+    private readonly object _targetLock = new();
     private CancellationTokenSource? _cts;
+    private string _targetHost = "127.0.0.1";
+    private int _targetPort = 80;
     private volatile bool _isRunning;
     private volatile bool _disposed;
     private int _isPinging;
 
-    public string TargetHost { get; set; } = "127.0.0.1";
-    public int TargetPort { get; set; } = 80;
+    public string TargetHost
+    {
+        get { lock (_targetLock) return _targetHost; }
+        set { lock (_targetLock) _targetHost = value; }
+    }
+
+    public int TargetPort
+    {
+        get { lock (_targetLock) return _targetPort; }
+        set { lock (_targetLock) _targetPort = value; }
+    }
+
     public TimeSpan Interval { get; set; } = TimeSpan.FromSeconds(2);
     public TimeSpan Timeout { get; set; } = TimeSpan.FromMilliseconds(2000);
 
@@ -41,8 +54,13 @@ public class NetworkPingService : IDisposable
         {
             if (Uri.TryCreate(url, UriKind.Absolute, out Uri? uri))
             {
-                TargetHost = uri.Host;
-                TargetPort = uri.Port > 0 ? uri.Port : (uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? 443 : 80);
+                string host = uri.Host;
+                int port = uri.Port > 0 ? uri.Port : (uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? 443 : 80);
+                lock (_targetLock)
+                {
+                    _targetHost = host;
+                    _targetPort = port;
+                }
             }
         }
         catch { }
@@ -55,12 +73,20 @@ public class NetworkPingService : IDisposable
             return PingStatus.Disconnected();
         }
 
+        string host;
+        int port;
+        lock (_targetLock)
+        {
+            host = _targetHost;
+            port = _targetPort;
+        }
+
         long rtt;
         if (_customProbe != null)
         {
             try
             {
-                rtt = await _customProbe(TargetHost, TargetPort, cancellationToken);
+                rtt = await _customProbe(host, port, cancellationToken);
             }
             catch
             {
@@ -69,7 +95,7 @@ public class NetworkPingService : IDisposable
         }
         else
         {
-            rtt = await ProbeLatencyAsync(TargetHost, TargetPort, (int)Timeout.TotalMilliseconds, cancellationToken);
+            rtt = await ProbeLatencyAsync(host, port, (int)Timeout.TotalMilliseconds, cancellationToken);
         }
 
         var status = PingStatus.Create(rtt);

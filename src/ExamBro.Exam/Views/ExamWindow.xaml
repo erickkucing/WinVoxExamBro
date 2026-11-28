@@ -52,9 +52,10 @@
 
     <Grid>
         <!-- Main Application Shell -->
-        <DockPanel LastChildFill="True">
-            <!-- Toolbar (Docked Top) -->
-            <Border DockPanel.Dock="Top"
+        <DockPanel LastChildFill="True" UseLayoutRounding="True">
+            <!-- Toolbar (Docked Top - Always above Warning & Completion Overlays) -->
+            <Border x:Name="topBar"
+                    DockPanel.Dock="Top"
                     Panel.ZIndex="10"
                     Height="44"
                     Background="#1E293B"
@@ -67,17 +68,20 @@
                 <Grid>
                     <!-- Left Navigation Controls -->
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
-                        <Button Content="◀"
+                        <Button x:Name="btnBack"
+                                Content="◀"
                                 ToolTip="Kembali"
                                 Style="{StaticResource ToolbarButtonStyle}"
                                 Command="{Binding GoBackCommand}"
                                 IsEnabled="{Binding CanGoBack}"/>
-                        <Button Content="▶"
+                        <Button x:Name="btnForward"
+                                Content="▶"
                                 ToolTip="Maju"
                                 Style="{StaticResource ToolbarButtonStyle}"
                                 Command="{Binding GoForwardCommand}"
                                 IsEnabled="{Binding CanGoForward}"/>
-                        <Button Content="↻"
+                        <Button x:Name="btnReload"
+                                Content="↻"
                                 ToolTip="Muat Ulang"
                                 Style="{StaticResource ToolbarButtonStyle}"
                                 Command="{Binding ReloadCommand}"/>
@@ -188,47 +192,50 @@
                 </Grid>
             </Border>
 
-            <!-- Embedded WebView2 Browser -->
-            <wv2:WebView2 x:Name="webView"/>
+            <!-- Content Host below Top Bar (WebView2 + Content-Area Overlays) -->
+            <Grid x:Name="contentHost">
+                <!-- Embedded WebView2 Browser (Hidden cleanly when WPF overlays appear to prevent HwndHost airspace bleed) -->
+                <wv2:WebView2 x:Name="webView"/>
+
+                <!-- WebView2 Engine Failure Fallback Overlay -->
+                <Grid x:Name="pnlWebViewInitError" Visibility="Collapsed" Background="#0F172A">
+                    <Border Width="500" Background="#1E293B" CornerRadius="12" Padding="36" HorizontalAlignment="Center" VerticalAlignment="Center" BorderBrush="#EF4444" BorderThickness="1.5">
+                        <StackPanel HorizontalAlignment="Center">
+                            <Border Width="64" Height="64" CornerRadius="32" Background="#450A0A" Margin="0,0,0,16" HorizontalAlignment="Center">
+                                <TextBlock Text="⚠" FontSize="34" Foreground="#EF4444" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <TextBlock Text="Gagal Memuat Mesin Browser" FontSize="20" FontWeight="Bold" Foreground="#F8FAFC" HorizontalAlignment="Center" Margin="0,0,0,12"/>
+                            <TextBlock Text="Komponen Microsoft Edge WebView2 Runtime tidak dapat diinisialisasi atau belum terpasang di sistem ini. Silakan hubungi proktor atau administrator ujian." FontSize="14" Foreground="#CBD5E1" TextWrapping="Wrap" TextAlignment="Center" Margin="0,0,0,24"/>
+                            <Button Content="Tutup Aplikasi" Width="160" Height="42" Background="#DC2626" Foreground="#FFFFFF" FontWeight="SemiBold" Cursor="Hand" Click="BtnInitErrorExit_Click">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="btnExitBorder" Background="{TemplateBinding Background}" CornerRadius="6">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="btnExitBorder" Property="Background" Value="#EF4444"/>
+                                            </Trigger>
+                                            <Trigger Property="IsPressed" Value="True">
+                                                <Setter TargetName="btnExitBorder" Property="Background" Value="#B91C1C"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <!-- Security Warning Overlay (Scoped below Top Bar; Auto-dismisses in 5s) -->
+                <views:WarningOverlay x:Name="warningOverlay" Visibility="Collapsed"/>
+
+                <!-- Completion Overlay (Scoped below Top Bar so Reload/Zoom remain interactive) -->
+                <views:CompletionOverlay x:Name="completionOverlay" Visibility="Collapsed"/>
+            </Grid>
         </DockPanel>
 
-        <!-- WebView2 Engine Failure Fallback Overlay -->
-        <Grid x:Name="pnlWebViewInitError" Visibility="Collapsed" Background="#0F172A">
-            <Border Width="500" Background="#1E293B" CornerRadius="12" Padding="36" HorizontalAlignment="Center" VerticalAlignment="Center" BorderBrush="#EF4444" BorderThickness="1.5">
-                <StackPanel HorizontalAlignment="Center">
-                    <Border Width="64" Height="64" CornerRadius="32" Background="#450A0A" Margin="0,0,0,16" HorizontalAlignment="Center">
-                        <TextBlock Text="⚠" FontSize="34" Foreground="#EF4444" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-                    <TextBlock Text="Gagal Memuat Mesin Browser" FontSize="20" FontWeight="Bold" Foreground="#F8FAFC" HorizontalAlignment="Center" Margin="0,0,0,12"/>
-                    <TextBlock Text="Komponen Microsoft Edge WebView2 Runtime tidak dapat diinisialisasi atau belum terpasang di sistem ini. Silakan hubungi proktor atau administrator ujian." FontSize="14" Foreground="#94A3B8" TextWrapping="Wrap" TextAlignment="Center" Margin="0,0,0,24"/>
-                    <Button Content="Tutup Aplikasi" Width="160" Height="38" Background="#DC2626" Foreground="#FFFFFF" FontWeight="SemiBold" Cursor="Hand" Click="BtnInitErrorExit_Click">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border x:Name="btnExitBorder" Background="{TemplateBinding Background}" CornerRadius="6">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                                <ControlTemplate.Triggers>
-                                    <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter TargetName="btnExitBorder" Property="Background" Value="#EF4444"/>
-                                    </Trigger>
-                                    <Trigger Property="IsPressed" Value="True">
-                                        <Setter TargetName="btnExitBorder" Property="Background" Value="#B91C1C"/>
-                                    </Trigger>
-                                </ControlTemplate.Triggers>
-                            </ControlTemplate>
-                        </Button.Template>
-                    </Button>
-                </StackPanel>
-            </Border>
-        </Grid>
-
-        <!-- Security Warning Overlay (Auto-dismisses in 5s) -->
-        <views:WarningOverlay x:Name="warningOverlay" Visibility="Collapsed"/>
-
-        <!-- Lockout Overlay (Requires Proctor Unlock) -->
+        <!-- Full-Window Lockout Overlay (Covers Top Bar + WebView2; Requires Proctor Unlock) -->
         <views:LockScreen x:Name="lockScreen" Visibility="Collapsed"/>
-
-        <!-- Completion Overlay (Exam Finish Countdown) -->
-        <views:CompletionOverlay x:Name="completionOverlay" Visibility="Collapsed"/>
     </Grid>
 </Window>

@@ -81,4 +81,41 @@ public sealed class WindowsServiceConcurrencyTests
         Assert.Empty(exceptions);
         Assert.Equal(0, postDisposeEvents);
     }
+
+    [Fact]
+    public void H21_H22_H23_FocusScreenAndClipboardServices_ConcurrentDisposeAndSuspend_DoNotThrow()
+    {
+        var cfg = ExamConfig.CreateDefault();
+        var exceptions = new ConcurrentQueue<Exception>();
+
+        for (int iter = 0; iter < 20; iter++)
+        {
+            var focusGuard = new FocusGuardService();
+            var screenProtection = new ScreenProtectionService(cfg);
+            var clipboardService = new ClipboardService(cfg);
+
+            Parallel.For(0, 8, i =>
+            {
+                try
+                {
+                    focusGuard.SetSuspended((i & 1) == 0);
+                    if (i == 0) focusGuard.Dispose();
+                    if (i == 1) screenProtection.Dispose();
+                    if (i == 2) clipboardService.Dispose();
+                    if (i == 3) _ = screenProtection.EnforceMonitorPolicy();
+                    focusGuard.ReclaimFocus();
+                }
+                catch (Exception ex)
+                {
+                    exceptions.Enqueue(ex);
+                }
+            });
+
+            focusGuard.Dispose();
+            screenProtection.Dispose();
+            clipboardService.Dispose();
+        }
+
+        Assert.Empty(exceptions);
+    }
 }

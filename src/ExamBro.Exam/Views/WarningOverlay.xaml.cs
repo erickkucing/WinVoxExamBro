@@ -62,4 +62,13 @@ public partial class WarningOverlay : UserControl
         Visibility = Visibility.Collapsed;
         Dismissed?.Invoke();
     }
+
+    /// <summary>
+    /// Hides the warning silently without triggering <see cref="Dismissed"/> (used when superseded by LockScreen).
+    /// </summary>
+    public void DismissSilent()
+    {
+        _timer.Stop();
+        Visibility = Visibility.Collapsed;
+    }
 }

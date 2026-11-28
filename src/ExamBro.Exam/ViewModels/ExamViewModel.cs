@@ -19,7 +19,7 @@ public partial class ExamViewModel : ObservableObject, IDisposable
 {
     private readonly DispatcherTimer _clockTimer;
     private readonly NetworkPingService _pingService;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     [ObservableProperty]
     private string _currentUrl = string.Empty;
@@ -119,12 +119,20 @@ public partial class ExamViewModel : ObservableObject, IDisposable
 
     private void OnPingUpdated(PingStatus status)
     {
+        if (_disposed) return;
+
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
         if (dispatcher != null && !dispatcher.CheckAccess())
         {
-            dispatcher.InvokeAsync(() => ApplyPingStatus(status));
+            dispatcher.InvokeAsync(() =>
+            {
+                if (!_disposed)
+                {
+                    ApplyPingStatus(status);
+                }
+            });
         }
-        else
+        else if (!_disposed)
         {
             ApplyPingStatus(status);
         }
@@ -132,6 +140,7 @@ public partial class ExamViewModel : ObservableObject, IDisposable
 
     private void ApplyPingStatus(PingStatus status)
     {
+        if (_disposed) return;
         CurrentPingStatus = status;
         PingTimeDisplay = status.DisplayTime;
         IsNetworkConnected = status.IsConnected;
@@ -250,12 +259,15 @@ public partial class ExamViewModel : ObservableObject, IDisposable
 
     protected virtual void Dispose(bool disposing)
     {
-        if (!_disposed)
+        if (_disposed) return;
+        _disposed = true;
+
+        _pingService.PingUpdated -= OnPingUpdated;
+        if (disposing)
         {
             _clockTimer.Stop();
-            _pingService.Dispose();
-            _disposed = true;
         }
+        _pingService.Dispose();
     }
 
     ~ExamViewModel()

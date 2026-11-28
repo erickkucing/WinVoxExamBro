@@ -18,10 +18,17 @@ public partial class CompletionOverlay : UserControl
         InitializeComponent();
     }
 
+    public bool IsShowing => Visibility == Visibility.Visible;
+
     public void ShowCompletion(int autoCloseSeconds = 5)
     {
         txtCountdown.Text = "Ujian telah selesai. Aplikasi terkunci dan hanya dapat ditutup oleh pengawas dengan password.";
         Visibility = Visibility.Visible;
+    }
+
+    public void HideCompletion()
+    {
+        Visibility = Visibility.Collapsed;
     }
 
     private void BtnExitNow_Click(object sender, RoutedEventArgs e)

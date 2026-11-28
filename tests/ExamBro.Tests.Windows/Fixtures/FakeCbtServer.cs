@@ -23,6 +23,7 @@ public sealed class FakeCbtServer : IAsyncDisposable
     public volatile string? LastUserAgent;
     public volatile bool DropConnections;
     public volatile bool Return500;
+    public volatile bool ReopenFinishedSessions;
     public int SlowDelayMs { get; set; } = 1500;
 
     private FakeCbtServer(WebApplication app, string baseUrl)
@@ -100,9 +101,17 @@ public sealed class FakeCbtServer : IAsyncDisposable
             """,
             "text/html"));
 
-        app.MapGet("/exam/finished/{id}", (string id) => Results.Content(
-            $"<!doctype html><html><body><h1 id=\"finished-banner\">Ujian {id} Selesai</h1></body></html>",
-            "text/html"));
+        app.MapGet("/exam/finished/{id}", (string id) =>
+        {
+            if (instance?.ReopenFinishedSessions == true)
+            {
+                return Results.Redirect($"/exam/workspace/{id}");
+            }
+
+            return Results.Content(
+                $"<!doctype html><html><body><h1 id=\"finished-banner\">Ujian {id} Selesai</h1></body></html>",
+                "text/html");
+        });
 
         static async Task<string> ReadRequestBody(HttpRequest req)
         {

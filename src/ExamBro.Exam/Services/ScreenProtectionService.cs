@@ -18,7 +18,8 @@ public class ScreenProtectionService : IDisposable
 
     private readonly ExamConfig _config;
     private readonly List<SecondaryScreenOverlayWindow> _overlayWindows = new();
-    private bool _disposed;
+    private readonly object _overlayLock = new();
+    private volatile bool _disposed;
 
     // Win32 P/Invoke Declarations
 
@@ -178,6 +179,11 @@ public class ScreenProtectionService : IDisposable
     /// </summary>
     public bool EnforceMonitorPolicy(Action<string>? onViolation = null)
     {
+        if (_disposed)
+        {
+            return true;
+        }
+
         var monitors = EnumerateMonitors();
         int monitorCount = monitors.Count;
 
@@ -211,10 +217,13 @@ public class ScreenProtectionService : IDisposable
     /// </summary>
     private void CoverSecondaryMonitors(List<MonitorInfoRecord> monitors)
     {
+        if (_disposed) return;
+
         CloseOverlays();
 
         foreach (var monitor in monitors)
         {
+            if (_disposed) break;
             if (monitor.IsPrimary) continue;
 
             try
@@ -233,7 +242,23 @@ public class ScreenProtectionService : IDisposable
                 var helper = new WindowInteropHelper(overlay);
                 ApplyCaptureProtection(helper.Handle);
 
-                _overlayWindows.Add(overlay);
+                bool keepOverlay = false;
+                lock (_overlayLock)
+                {
+                    if (!_disposed)
+                    {
+                        _overlayWindows.Add(overlay);
+                        keepOverlay = true;
+                    }
+                }
+
+                if (!keepOverlay)
+                {
+                    RemoveCaptureProtection(helper.Handle);
+                    overlay.Close();
+                    break;
+                }
+
                 Log.Information("Created blackout overlay on secondary monitor at ({X}, {Y}, {W}x{H})",
                     monitor.MonitorRect.Left, monitor.MonitorRect.Top, monitor.MonitorRect.Width, monitor.MonitorRect.Height);
             }
@@ -249,7 +274,14 @@ public class ScreenProtectionService : IDisposable
     /// </summary>
     public void CloseOverlays()
     {
-        foreach (var overlay in _overlayWindows)
+        List<SecondaryScreenOverlayWindow> snapshot;
+        lock (_overlayLock)
+        {
+            snapshot = _overlayWindows.ToList();
+            _overlayWindows.Clear();
+        }
+
+        foreach (var overlay in snapshot)
         {
             try
             {
@@ -262,7 +294,6 @@ public class ScreenProtectionService : IDisposable
                 Log.Debug(ex, "Error closing secondary overlay window");
             }
         }
-        _overlayWindows.Clear();
     }
 
     // IDisposable
@@ -275,10 +306,12 @@ public class ScreenProtectionService : IDisposable
 
     protected virtual void Dispose(bool disposing)
     {
-        if (!_disposed)
+        if (_disposed) return;
+        _disposed = true;
+
+        if (disposing)
         {
             CloseOverlays();
-            _disposed = true;
         }
     }
 

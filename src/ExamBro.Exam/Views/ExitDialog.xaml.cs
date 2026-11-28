@@ -48,13 +48,25 @@ public partial class ExitDialog : Window
             if (_attemptTracker.IsLockedOut(out int remaining))
             {
                 ApplyLockoutUi(remaining);
+                btnCancel.Focus();
             }
             else
             {
                 pwdExit.Focus();
+                Keyboard.Focus(pwdExit);
             }
         };
         Closing += (_, _) => _lockoutTimer.Stop();
+    }
+
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            DialogResult = false;
+            Close();
+        }
     }
 
     private void PwdExit_KeyDown(object sender, KeyEventArgs e)
@@ -177,6 +189,7 @@ public partial class ExitDialog : Window
             txtLockout.Text = string.Empty;
 
             pwdExit.Focus();
+            Keyboard.Focus(pwdExit);
         }
         else
         {

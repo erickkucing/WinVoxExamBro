@@ -82,4 +82,44 @@ public class NetworkPingServiceLifecycleTests
 
         Assert.Empty(exceptions);
     }
+
+    [Fact]
+    public async Task ConcurrentUpdateTargetFromUrl_NeverExposesTornHostAndPortPair()
+    {
+        var tornPairs = new ConcurrentQueue<string>();
+        using var cts = new CancellationTokenSource();
+
+        var service = new NetworkPingService(customProbe: (host, port, _) =>
+        {
+            bool validA = host == "10.0.0.1" && port == 8001;
+            bool validB = host == "10.0.0.2" && port == 9443;
+            bool validDefault = host == "127.0.0.1" && port == 80;
+            if (!validA && !validB && !validDefault)
+            {
+                tornPairs.Enqueue($"{host}:{port}");
+            }
+            return Task.FromResult(5L);
+        });
+
+        var writerTask = Task.Run(() =>
+        {
+            for (int i = 0; i < 40000 && !cts.IsCancellationRequested; i++)
+            {
+                service.UpdateTargetFromUrl((i & 1) == 0 ? "http://10.0.0.1:8001/exam" : "https://10.0.0.2:9443/exam");
+            }
+        });
+
+        var readerTasks = Enumerable.Range(0, 4).Select(_ => Task.Run(async () =>
+        {
+            for (int i = 0; i < 10000 && !cts.IsCancellationRequested; i++)
+            {
+                await service.MeasureOnceAsync(cts.Token);
+            }
+        })).ToArray();
+
+        await Task.WhenAll(readerTasks.Append(writerTask));
+        service.Dispose();
+
+        Assert.Empty(tornPairs);
+    }
 }

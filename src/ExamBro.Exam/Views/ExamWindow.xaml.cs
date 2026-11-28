@@ -7,6 +7,7 @@ using Microsoft.Web.WebView2.Core;
 using ExamBro.Core;
 using ExamBro.Core.Models;
 using ExamBro.Core.Network;
+using ExamBro.Core.UI;
 using ExamBro.Core.Validation;
 using ExamBro.Exam.Services;
 using ExamBro.Exam.ViewModels;
@@ -42,6 +43,8 @@ public partial class ExamWindow : Window
     private string _lastValidUrl = string.Empty;
     private volatile bool _isClosingCleanly;
     private readonly ExamBro.Core.Security.PasswordAttemptTracker _exitAttemptTracker = new();
+    private readonly ExamOverlayCoordinator _overlayCoordinator = new();
+    private bool? _lastWebOverlayActiveSent;
 
     public ExamWindow(ExamConfig config, bool isDevSafe = false, string? urlOverride = null)
     {
@@ -69,7 +72,11 @@ public partial class ExamWindow : Window
         _viewModel.RequestExitRequested += ShowExitConfirmation;
 
         // Overlay Events
-        warningOverlay.Dismissed += () => SetWebOverlayActive(false);
+        warningOverlay.Dismissed += () =>
+        {
+            if (_isClosingCleanly) return;
+            ApplyOverlayState(_overlayCoordinator.HideWarning());
+        };
         lockScreen.Initialize(_config);
         lockScreen.Unlocked += OnLockScreenUnlocked;
         completionOverlay.ExitRequested += ShowExitConfirmation;
@@ -172,8 +179,8 @@ public partial class ExamWindow : Window
             Dispatcher.BeginInvoke(() =>
             {
                 if (_isClosingCleanly) return;
-                SetWebOverlayActive(true);
                 warningOverlay.ShowWarning(msg, count);
+                ApplyOverlayState(_overlayCoordinator.ShowWarning());
             });
         };
         _violationManager.ShowLockScreen += (type, reason) =>
@@ -181,8 +188,9 @@ public partial class ExamWindow : Window
             Dispatcher.BeginInvoke(() =>
             {
                 if (_isClosingCleanly) return;
-                SetWebOverlayActive(true);
+                warningOverlay.DismissSilent();
                 lockScreen.ShowLock(reason);
+                ApplyOverlayState(_overlayCoordinator.ShowLockScreen());
             });
         };
         _violationManager.RequestTerminate += (type, reason) =>
@@ -531,15 +539,16 @@ public partial class ExamWindow : Window
     private void OnWindowCloseRequested(object? sender, object e)
     {
         Log.Information("CoreWebView2.WindowCloseRequested intercepted; preventing automatic window closure on submit.");
-        Dispatcher.Invoke(() =>
+        RunOnUiThread(() =>
         {
             completionOverlay.ShowCompletion(_config.Navigation.ExitUrlAutoCloseSeconds);
+            ApplyOverlayState(_overlayCoordinator.ShowCompletion());
         });
     }
 
     private void OnContainsFullScreenElementChanged(object? sender, object e)
     {
-        Dispatcher.Invoke(() =>
+        RunOnUiThread(() =>
         {
             if (Mouse.Captured != null)
             {
@@ -558,6 +567,8 @@ public partial class ExamWindow : Window
 
     private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
     {
+        if (_isClosingCleanly) return;
+
         string uri = e.Uri;
 
         // Allow internal about:blank or data-error rendering
@@ -566,14 +577,13 @@ public partial class ExamWindow : Window
             return;
         }
 
-        // 1. Check Exit URL
+        // 1. Exit URL allowed to load; defer CompletionOverlay activation until settled in OnNavigationCompleted
+        //    so server 302 redirects (e.g., reopened sessions redirecting back to /exam/workspace) recover seamlessly.
         if (UrlMatcher.MatchesExitUrl(uri, _config.Navigation.ExitUrlPattern))
         {
-            Log.Information("Exam exit URL reached: {Uri}", uri);
-            Dispatcher.Invoke(() =>
-            {
-                completionOverlay.ShowCompletion(_config.Navigation.ExitUrlAutoCloseSeconds);
-            });
+            Log.Information("Exam exit URL navigation starting: {Uri}", uri);
+            _lastValidUrl = uri;
+            _viewModel.UpdateUrl(uri);
             return;
         }
 
@@ -586,6 +596,9 @@ public partial class ExamWindow : Window
             ShowErrorPage();
             return;
         }
+
+        // Navigating to an active non-exit URL clears any stale CompletionOverlay (e.g., reopened session)
+        ApplyOverlayState(_overlayCoordinator.OnNavigationStarting(uri, _config.Navigation.ExitUrlPattern));
 
         _lastValidUrl = uri;
         _viewModel.UpdateUrl(uri);
@@ -646,22 +659,35 @@ public partial class ExamWindow : Window
 
     private void OnProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
     {
+        if (_isClosingCleanly) return;
+
         Log.Error("WebView2 process failed: {Kind}, Reason: {Reason}", e.ProcessFailedKind, e.Reason);
-        try
+        RunOnUiThread(() =>
         {
-            // Recover back to last good URL or start URL
-            string recoverUrl = !string.IsNullOrEmpty(_lastValidUrl) ? _lastValidUrl : _resolvedStartUrl;
-            webView.CoreWebView2.Navigate(recoverUrl);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Failed to recover from WebView2 process crash");
-            ShowErrorPage();
-        }
+            try
+            {
+                if (webView?.CoreWebView2 == null)
+                {
+                    ShowErrorPage();
+                    return;
+                }
+
+                // Recover back to last good URL or start URL
+                string recoverUrl = !string.IsNullOrEmpty(_lastValidUrl) ? _lastValidUrl : _resolvedStartUrl;
+                webView.CoreWebView2.Navigate(recoverUrl);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to recover from WebView2 process crash");
+                ShowErrorPage();
+            }
+        });
     }
 
     private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
+        if (_isClosingCleanly) return;
+
         try
         {
             string msg = e.TryGetWebMessageAsString();
@@ -670,8 +696,12 @@ public partial class ExamWindow : Window
             if (msg.Equals("retry", StringComparison.OrdinalIgnoreCase))
             {
                 Log.Information("User requested retry from error page");
-                string target = !string.IsNullOrEmpty(_lastValidUrl) ? _lastValidUrl : _resolvedStartUrl;
-                webView.CoreWebView2.Navigate(target);
+                RunOnUiThread(() =>
+                {
+                    if (webView?.CoreWebView2 == null) return;
+                    string target = !string.IsNullOrEmpty(_lastValidUrl) ? _lastValidUrl : _resolvedStartUrl;
+                    webView.CoreWebView2.Navigate(target);
+                });
                 return;
             }
 
@@ -690,14 +720,19 @@ public partial class ExamWindow : Window
                             int strikes = root.TryGetProperty("strikes", out var s) ? s.GetInt32() : 0;
                             bool isLocked = root.TryGetProperty("isLocked", out var l) && l.GetBoolean();
                             Log.Information("projectCBT Config Synced: maxStrikes={Max}, currentStrikes={Strikes}, locked={Locked}", maxStrikes, strikes, isLocked);
-                            if (isLocked)
+                            RunOnUiThread(() =>
                             {
-                                Dispatcher.Invoke(() =>
+                                string? currentUri = webView?.Source?.ToString();
+                                if (isLocked)
                                 {
-                                    SetWebOverlayActive(true);
+                                    warningOverlay.DismissSilent();
                                     lockScreen.ShowLock("Sesi ujian berstatus terkunci di server CBT.");
-                                });
-                            }
+                                }
+                                ApplyOverlayState(_overlayCoordinator.OnWebExamConfigReceived(
+                                    isLocked,
+                                    currentUri,
+                                    _config.Navigation.ExitUrlPattern));
+                            });
                             break;
 
                         case "CBT_VIOLATION":
@@ -706,33 +741,36 @@ public partial class ExamWindow : Window
                             int vStrikes = root.TryGetProperty("strikes", out var vs) ? vs.GetInt32() : 1;
                             bool vLocked = root.TryGetProperty("isLocked", out var vl) && vl.GetBoolean();
                             Log.Warning("projectCBT Violation Event: Type={Type}, Message={Msg}, Strikes={Strikes}, Locked={Locked}", vType, vMsg, vStrikes, vLocked);
-                            Dispatcher.Invoke(() =>
+                            RunOnUiThread(() =>
                             {
-                                SetWebOverlayActive(true);
                                 if (vLocked)
                                 {
+                                    warningOverlay.DismissSilent();
                                     lockScreen.ShowLock(vMsg);
+                                    ApplyOverlayState(_overlayCoordinator.ShowLockScreen());
                                 }
                                 else
                                 {
                                     warningOverlay.ShowWarning(vMsg, vStrikes);
+                                    ApplyOverlayState(_overlayCoordinator.ShowWarning());
                                 }
                             });
                             break;
 
                         case "CBT_UNLOCKED":
                             Log.Information("projectCBT Remote Unlock: Proctor unlocked student session via web dashboard.");
-                            Dispatcher.Invoke(() =>
+                            RunOnUiThread(() =>
                             {
                                 lockScreen.RemoteUnlock();
                             });
                             break;
 
                         case "CBT_FINISHED":
-                            Log.Information("projectCBT Finished: Exam submitted successfully. Initiating completion countdown.");
-                            Dispatcher.Invoke(() =>
+                            Log.Information("projectCBT Finished: Exam submitted successfully. Showing completion overlay.");
+                            RunOnUiThread(() =>
                             {
                                 completionOverlay.ShowCompletion(_config.Navigation.ExitUrlAutoCloseSeconds);
+                                ApplyOverlayState(_overlayCoordinator.ShowCompletion());
                             });
                             break;
                     }
@@ -742,6 +780,46 @@ public partial class ExamWindow : Window
         catch (Exception ex)
         {
             Log.Warning(ex, "Error handling WebMessage from WebView2");
+        }
+    }
+
+    private void RunOnUiThread(Action action)
+    {
+        if (_isClosingCleanly) return;
+
+        if (Dispatcher.CheckAccess())
+        {
+            action();
+        }
+        else
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (!_isClosingCleanly)
+                {
+                    action();
+                }
+            });
+        }
+    }
+
+    private void ApplyOverlayState(OverlayVisualState state)
+    {
+        if (_isClosingCleanly) return;
+
+        pnlWebViewInitError.Visibility = state.IsInitErrorVisible ? Visibility.Visible : Visibility.Collapsed;
+        warningOverlay.Visibility = state.IsWarningVisible ? Visibility.Visible : Visibility.Collapsed;
+        completionOverlay.Visibility = state.IsCompletionVisible ? Visibility.Visible : Visibility.Collapsed;
+        lockScreen.Visibility = state.IsLockScreenVisible ? Visibility.Visible : Visibility.Collapsed;
+
+        // Collapse native WebView2 (HwndHost) while any WPF overlay is active so Win32 child window
+        // never punches through WPF overlay cards and darkens only the TopBar.
+        webView.Visibility = state.IsWebViewVisible ? Visibility.Visible : Visibility.Collapsed;
+
+        if (_lastWebOverlayActiveSent != state.ShouldSuppressWebBlur)
+        {
+            _lastWebOverlayActiveSent = state.ShouldSuppressWebBlur;
+            SetWebOverlayActive(state.ShouldSuppressWebBlur);
         }
     }
 
@@ -835,8 +913,25 @@ public partial class ExamWindow : Window
 
     private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
+        if (_isClosingCleanly) return;
+
         _viewModel.CanGoBack = _config.Navigation.AllowBackForward && webView.CanGoBack;
         _viewModel.CanGoForward = _config.Navigation.AllowBackForward && webView.CanGoForward;
+
+        string? settledUrl = webView.Source?.ToString();
+        if (e.IsSuccess && !string.IsNullOrEmpty(settledUrl) &&
+            !settledUrl.Equals("about:blank", StringComparison.OrdinalIgnoreCase))
+        {
+            _lastValidUrl = settledUrl;
+            _viewModel.UpdateUrl(settledUrl);
+        }
+
+        var nextState = _overlayCoordinator.OnNavigationCompleted(settledUrl, e.IsSuccess, _config.Navigation.ExitUrlPattern);
+        if (nextState.IsCompletionVisible && !completionOverlay.IsShowing)
+        {
+            completionOverlay.ShowCompletion(_config.Navigation.ExitUrlAutoCloseSeconds);
+        }
+        ApplyOverlayState(nextState);
 
         if (!e.IsSuccess && e.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled
             && e.WebErrorStatus != CoreWebView2WebErrorStatus.CertificateCommonNameIsIncorrect
@@ -848,7 +943,7 @@ public partial class ExamWindow : Window
 
             // Toleransi tinggi: Jika siswa berada dalam lembar ujian (/exam/workspace),
             // jangan hapus DOM lembar soal dengan ErrorPage saat koneksi bermasalah sementara!
-            string currentUrl = webView.Source?.ToString() ?? _lastValidUrl;
+            string currentUrl = settledUrl ?? _lastValidUrl;
             if (_viewModel.PingService.TolerancePolicy.ShouldPreventErrorPageNavigation(currentUrl))
             {
                 Log.Warning("Suppressing ErrorPage navigation during transient network drop/instability to protect exam workspace.");
@@ -862,6 +957,8 @@ public partial class ExamWindow : Window
 
     private void ShowErrorPage()
     {
+        if (_isClosingCleanly) return;
+
         try
         {
             if (webView?.CoreWebView2 != null)
@@ -871,13 +968,13 @@ public partial class ExamWindow : Window
             }
             else
             {
-                pnlWebViewInitError.Visibility = Visibility.Visible;
+                ApplyOverlayState(_overlayCoordinator.ShowInitError());
             }
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to render error page");
-            pnlWebViewInitError.Visibility = Visibility.Visible;
+            ApplyOverlayState(_overlayCoordinator.ShowInitError());
         }
     }
 
@@ -956,9 +1053,9 @@ public partial class ExamWindow : Window
     private void OnReloadRequested()
     {
         if (Mouse.Captured != null) Mouse.Capture(null);
-        if (_config.Navigation.AllowReload)
+        if (_config.Navigation.AllowReload && webView?.CoreWebView2 != null)
         {
-            webView.Reload();
+            webView.CoreWebView2.Reload();
         }
     }
 
@@ -970,9 +1067,9 @@ public partial class ExamWindow : Window
 
     private void OnZoomFactorChangeRequested(double zoom)
     {
-        Dispatcher.Invoke(() =>
+        RunOnUiThread(() =>
         {
-            if (webView.CoreWebView2 != null)
+            if (webView?.CoreWebView2 != null)
             {
                 webView.ZoomFactor = zoom;
             }
@@ -1177,13 +1274,13 @@ public partial class ExamWindow : Window
 
     private void ShowExitConfirmation()
     {
-        if (_isExitDialogOpen) return;
+        if (_isExitDialogOpen || _isClosingCleanly) return;
         _isExitDialogOpen = true;
 
         if (Mouse.Captured != null) Mouse.Capture(null);
         _focusGuard?.SetSuspended(true);
         _keyboardHook?.SetSuspended(true);
-        SetWebOverlayActive(true);
+        ApplyOverlayState(_overlayCoordinator.SetExitDialogOpen(true));
         try
         {
             var dialog = new ExitDialog(_config, _exitAttemptTracker)
@@ -1204,7 +1301,7 @@ public partial class ExamWindow : Window
             if (Mouse.Captured != null) Mouse.Capture(null);
             if (!_isClosingCleanly)
             {
-                SetWebOverlayActive(false);
+                ApplyOverlayState(_overlayCoordinator.SetExitDialogOpen(false));
                 _keyboardHook?.SetSuspended(false);
                 _focusGuard?.SetSuspended(false);
                 _focusGuard?.ReclaimFocus();
@@ -1214,7 +1311,8 @@ public partial class ExamWindow : Window
 
     private void OnLockScreenUnlocked()
     {
-        SetWebOverlayActive(false);
+        if (_isClosingCleanly) return;
+        ApplyOverlayState(_overlayCoordinator.HideLockScreen());
         _violationManager?.ResetCount(ViolationEventType.FocusLost);
         _violationManager?.ResetCount(ViolationEventType.BlockedKey);
         _violationManager?.ResetCount(ViolationEventType.BlockedProcess);
