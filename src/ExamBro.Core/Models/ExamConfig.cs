@@ -155,6 +155,9 @@ public class AudioConfig
 /// </summary>
 public class ExamConfig
 {
+    /// <summary>UTC ticks when this configuration was saved by an administrator. Defaults to 0 for unsaved defaults.</summary>
+    public long UpdatedAtUtcTicks { get; set; }
+
     public GeneralConfig General { get; set; } = new();
     public NavigationConfig Navigation { get; set; } = new();
     public SecurityConfig Security { get; set; } = new();

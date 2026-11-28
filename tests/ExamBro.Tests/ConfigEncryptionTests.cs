@@ -261,4 +261,180 @@ public class ConfigEncryptionTests
             }
         }
     }
+
+    [Fact]
+    public void EmbeddedConfig_WriteAndRead_RoundTripsAndPreservesBaseBinary()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"exambro_embed_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            string exePath = Path.Combine(tempDir, "LouisVox ExamBro.exe");
+            byte[] stubBytes = new byte[4096];
+            Random.Shared.NextBytes(stubBytes);
+            File.WriteAllBytes(exePath, stubBytes);
+
+            var config = CreateTestConfig();
+            config.General.StartUrl = "https://ujian.sman1.sch.id/login";
+            config.UpdatedAtUtcTicks = DateTime.UtcNow.Ticks;
+            byte[] encrypted = ConfigEncryption.EncryptPortableConfig(config);
+
+            EmbeddedConfigHelper.WriteEmbeddedConfig(exePath, encrypted);
+
+            byte[]? readPayload = EmbeddedConfigHelper.ReadEmbeddedConfigBytes(exePath);
+            Assert.NotNull(readPayload);
+            Assert.Equal(encrypted, readPayload);
+
+            var decrypted = ConfigEncryption.DecryptConfig(readPayload);
+            Assert.Equal("https://ujian.sman1.sch.id/login", decrypted.General.StartUrl);
+            Assert.Equal(config.Admin.ProctorPasswordHash, decrypted.Admin.ProctorPasswordHash);
+
+            // Base binary bytes before trailer must remain completely intact
+            using var fs = File.OpenRead(exePath);
+            Assert.Equal(stubBytes.Length, EmbeddedConfigHelper.GetBaseExecutableLength(fs));
+            fs.Seek(0, SeekOrigin.Begin);
+            byte[] readStub = new byte[stubBytes.Length];
+            fs.ReadExactly(readStub, 0, stubBytes.Length);
+            Assert.Equal(stubBytes, readStub);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void EmbeddedConfig_RepeatedWrites_ReplacesIdempotentlyWithoutGrowingFile()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"exambro_embed_idemp_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            string exePath = Path.Combine(tempDir, "LouisVox ExamBro.exe");
+            byte[] stubBytes = new byte[4096];
+            Random.Shared.NextBytes(stubBytes);
+            File.WriteAllBytes(exePath, stubBytes);
+
+            byte[] lastEncrypted = Array.Empty<byte>();
+            for (int i = 1; i <= 3; i++)
+            {
+                var config = CreateTestConfig();
+                config.General.StartUrl = $"https://ujian{i}.sekolah.sch.id";
+                config.UpdatedAtUtcTicks = DateTime.UtcNow.Ticks + i;
+                lastEncrypted = ConfigEncryption.EncryptPortableConfig(config);
+                EmbeddedConfigHelper.WriteEmbeddedConfig(exePath, lastEncrypted);
+            }
+
+            long expectedTotalLength = stubBytes.Length + lastEncrypted.Length + EmbeddedConfigHelper.FooterSize;
+            Assert.Equal(expectedTotalLength, new FileInfo(exePath).Length);
+
+            byte[]? payload = EmbeddedConfigHelper.ReadEmbeddedConfigBytes(exePath);
+            Assert.NotNull(payload);
+            var decrypted = ConfigEncryption.DecryptConfig(payload);
+            Assert.Equal("https://ujian3.sekolah.sch.id", decrypted.General.StartUrl);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolveConfig_WorksWhenOnlyEmbeddedExists_SimulatingZipTempLaunch()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"exambro_zip_temp_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            string exePath = Path.Combine(tempDir, "LouisVox ExamBro.exe");
+            File.WriteAllBytes(exePath, new byte[2048]);
+
+            var config = CreateTestConfig();
+            config.General.StartUrl = "https://cbt.ziponly.sch.id/exam";
+            config.UpdatedAtUtcTicks = 1000;
+            EmbeddedConfigHelper.WriteEmbeddedConfig(exePath, ConfigEncryption.EncryptPortableConfig(config));
+
+            // Notice: NO exambro.cfg exists in tempDir!
+            var (resolved, source, _) = EmbeddedConfigHelper.ResolveConfig(
+                targetExePath: exePath,
+                appDirectory: tempDir,
+                isInstalledInProgramFiles: false);
+
+            Assert.NotNull(resolved);
+            Assert.StartsWith("Embedded:", source);
+            Assert.Equal("https://cbt.ziponly.sch.id/exam", resolved.General.StartUrl);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolveConfig_PicksNewerTimestampBetweenEmbeddedAndSiblingCfg()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"exambro_ts_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            string exePath = Path.Combine(tempDir, "LouisVox ExamBro.exe");
+            string cfgPath = Path.Combine(tempDir, "exambro.cfg");
+            File.WriteAllBytes(exePath, new byte[2048]);
+
+            var olderEmbedded = CreateTestConfig();
+            olderEmbedded.General.StartUrl = "https://old-embedded.sch.id";
+            olderEmbedded.UpdatedAtUtcTicks = 100;
+            EmbeddedConfigHelper.WriteEmbeddedConfig(exePath, ConfigEncryption.EncryptPortableConfig(olderEmbedded));
+
+            var newerSibling = CreateTestConfig();
+            newerSibling.General.StartUrl = "https://new-sibling.sch.id";
+            newerSibling.UpdatedAtUtcTicks = 200;
+            AtomicFileWriter.WriteAllBytesFlushed(cfgPath, ConfigEncryption.EncryptPortableConfig(newerSibling));
+
+            var (res1, src1, _) = EmbeddedConfigHelper.ResolveConfig(exePath, tempDir, isInstalledInProgramFiles: false);
+            Assert.NotNull(res1);
+            Assert.Equal("https://new-sibling.sch.id", res1.General.StartUrl);
+            Assert.Equal(cfgPath, src1);
+
+            // Now make embedded newer than sibling
+            var newestEmbedded = CreateTestConfig();
+            newestEmbedded.General.StartUrl = "https://newest-embedded.sch.id";
+            newestEmbedded.UpdatedAtUtcTicks = 300;
+            EmbeddedConfigHelper.WriteEmbeddedConfig(exePath, ConfigEncryption.EncryptPortableConfig(newestEmbedded));
+
+            var (res2, src2, _) = EmbeddedConfigHelper.ResolveConfig(exePath, tempDir, isInstalledInProgramFiles: false);
+            Assert.NotNull(res2);
+            Assert.Equal("https://newest-embedded.sch.id", res2.General.StartUrl);
+            Assert.StartsWith("Embedded:", src2);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolveConfig_PortableMode_NeverFallsBackToMissingOrExternalPaths()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"exambro_isolated_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            string exePath = Path.Combine(tempDir, "LouisVox ExamBro.exe");
+            File.WriteAllBytes(exePath, new byte[2048]); // raw unconfigured binary, no exambro.cfg
+
+            var (resolved, source, raw) = EmbeddedConfigHelper.ResolveConfig(
+                targetExePath: exePath,
+                appDirectory: tempDir,
+                isInstalledInProgramFiles: false);
+
+            Assert.Null(resolved);
+            Assert.Equal("None", source);
+            Assert.Null(raw);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
 }

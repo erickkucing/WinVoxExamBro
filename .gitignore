@@ -42,3 +42,13 @@ Output/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+## Node / Playwright contract test artifacts
+node_modules/
+playwright-report/
+test-results/
+
+## Built portable distribution archives & CI integration scratch reports
+WinVoxExamBro-Portable*.zip
+projectcbt-integration-findings.md
+_projectcbt_ref/

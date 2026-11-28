@@ -79,9 +79,43 @@ public static class Constants
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             AppName, "exambro.cfg");
 
+    /// <summary>True when running from an installed Program Files directory rather than a portable folder.</summary>
+    public static bool IsInstalledInProgramFiles
+    {
+        get
+        {
+            try
+            {
+                string fullAppDir = Path.GetFullPath(AppDirectory)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+                foreach (var special in new[]
+                {
+                    Environment.SpecialFolder.ProgramFiles,
+                    Environment.SpecialFolder.ProgramFilesX86
+                })
+                {
+                    string pf = Environment.GetFolderPath(special);
+                    if (!string.IsNullOrWhiteSpace(pf))
+                    {
+                        string fullPf = Path.GetFullPath(pf)
+                            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                        if (fullAppDir.StartsWith(fullPf, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            return false;
+        }
+    }
+
     /// <summary>
     /// Config file path: checks application directory first (portable mode),
-    /// then falls back to ProgramData (installed mode).
+    /// and only falls back to ProgramData when installed inside Program Files.
     /// </summary>
     public static string ConfigFilePath
     {
@@ -94,57 +128,13 @@ public static class Constants
                 return localPath;
             }
 
-            // 2. Current working directory
-            try
-            {
-                string cwdPath = Path.Combine(Directory.GetCurrentDirectory(), "exambro.cfg");
-                if (File.Exists(cwdPath))
-                {
-                    return cwdPath;
-                }
-            }
-            catch { }
-
-            // 3. Parent / sibling directories if running in a modular build folder
-            try
-            {
-                string? parentDir = Directory.GetParent(AppDirectory)?.FullName;
-                if (!string.IsNullOrEmpty(parentDir))
-                {
-                    string parentPath = Path.Combine(parentDir, "exambro.cfg");
-                    if (File.Exists(parentPath))
-                    {
-                        return parentPath;
-                    }
-
-                    string siblingConfig = Path.Combine(parentDir, "ExamBro.Config", "exambro.cfg");
-                    if (File.Exists(siblingConfig))
-                    {
-                        return siblingConfig;
-                    }
-
-                    string siblingExam = Path.Combine(parentDir, "ExamBro.Exam", "exambro.cfg");
-                    if (File.Exists(siblingExam))
-                    {
-                        return siblingExam;
-                    }
-
-                    string siblingPortable = Path.Combine(parentDir, "portable", "WinVoxExamBro", "exambro.cfg");
-                    if (File.Exists(siblingPortable))
-                    {
-                        return siblingPortable;
-                    }
-                }
-            }
-            catch { }
-
-            // 4. System-wide ProgramData path (installed mode)
-            if (File.Exists(SystemConfigFilePath))
+            // 2. System-wide ProgramData path ONLY when installed inside Program Files
+            if (IsInstalledInProgramFiles && File.Exists(SystemConfigFilePath))
             {
                 return SystemConfigFilePath;
             }
 
-            // 5. Default fallback if not found anywhere: default to application directory (portable)
+            // 3. Default fallback: stay strictly scoped to application directory
             return PortableConfigPath;
         }
     }
@@ -154,37 +144,22 @@ public static class Constants
 
     /// <summary>
     /// Returns all existing candidate configuration file paths in priority order.
-    /// Used as a resilient fallback chain if the primary file was truncated by a hard power-off.
+    /// Keeps portable mode strictly isolated from ProgramData, working directory, or parent folders.
     /// </summary>
     public static IReadOnlyList<string> GetCandidateConfigPaths()
     {
         var results = new List<string>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        void TryAdd(string? candidate)
+        if (File.Exists(PortableConfigPath))
         {
-            if (!string.IsNullOrWhiteSpace(candidate) && File.Exists(candidate) && seen.Add(candidate))
-            {
-                results.Add(candidate);
-            }
+            results.Add(PortableConfigPath);
         }
 
-        TryAdd(ConfigFilePath);
-        TryAdd(PortableConfigPath);
-        TryAdd(SystemConfigFilePath);
-
-        try
+        if (IsInstalledInProgramFiles && File.Exists(SystemConfigFilePath) &&
+            !SystemConfigFilePath.Equals(PortableConfigPath, StringComparison.OrdinalIgnoreCase))
         {
-            string? parentDir = Directory.GetParent(AppDirectory)?.FullName;
-            if (!string.IsNullOrEmpty(parentDir))
-            {
-                TryAdd(Path.Combine(parentDir, "exambro.cfg"));
-                TryAdd(Path.Combine(parentDir, "ExamBro.Config", "exambro.cfg"));
-                TryAdd(Path.Combine(parentDir, "ExamBro.Exam", "exambro.cfg"));
-                TryAdd(Path.Combine(parentDir, "portable", "WinVoxExamBro", "exambro.cfg"));
-            }
+            results.Add(SystemConfigFilePath);
         }
-        catch { }
 
         return results;
     }

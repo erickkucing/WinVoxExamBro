@@ -36,55 +36,42 @@ public partial class App : Application
             Log.Information("Aplikasi ExamBro.Config dimulai");
 
             string configPath = Constants.ConfigFilePath;
-            var candidates = Constants.GetCandidateConfigPaths();
+            string? siblingExe = EmbeddedConfigHelper.FindSiblingExamExecutables(Constants.AppDirectory).FirstOrDefault();
 
-            // Scenario 1: First run - Config file does not exist
-            if (candidates.Count == 0)
+            bool anyCandidateExists =
+                File.Exists(Constants.PortableConfigPath) ||
+                (siblingExe != null && EmbeddedConfigHelper.ReadEmbeddedConfigBytes(siblingExe) != null) ||
+                (Constants.IsInstalledInProgramFiles && File.Exists(Constants.SystemConfigFilePath));
+
+            // Scenario 1: First run - No config exists locally or embedded in sibling exe
+            if (!anyCandidateExists)
             {
                 Log.Information("File konfigurasi tidak ditemukan di {Path}. Menjalankan SetupWizardDialog...", configPath);
                 RunFirstTimeSetup(configPath);
                 return;
             }
 
-            // Scenario 2: Config file exists - Attempt to decrypt and load (with backup fallback after hard power-off)
-            ExamConfig? loadedConfig = null;
-            Exception? lastDecryptEx = null;
+            // Scenario 2: Load newest config between sibling exambro.cfg and embedded config inside student exe
+            var (loadedConfig, configSource, resolvedBytes) = EmbeddedConfigHelper.ResolveConfig(
+                targetExePath: siblingExe,
+                appDirectory: Constants.AppDirectory);
 
-            foreach (string candidatePath in candidates)
+            if (loadedConfig != null)
             {
-                try
+                Log.Information("File konfigurasi berhasil dimuat dari {Source}", configSource);
+                if (!configSource.Equals(Constants.PortableConfigPath, StringComparison.OrdinalIgnoreCase) &&
+                    resolvedBytes != null)
                 {
-                    byte[] encryptedData = File.ReadAllBytes(candidatePath);
-                    if (encryptedData.Length == 0)
+                    try
                     {
-                        Log.Warning("File konfigurasi di {Path} berukuran 0 byte. Mencoba kandidat cadangan...", candidatePath);
-                        continue;
+                        AtomicFileWriter.WriteAllBytesFlushed(Constants.PortableConfigPath, resolvedBytes);
                     }
-
-                    loadedConfig = ConfigEncryption.DecryptConfig(encryptedData);
-                    Log.Information("File konfigurasi berhasil didekripsi dari {Path}", candidatePath);
-
-                    if (!candidatePath.Equals(Constants.PortableConfigPath, StringComparison.OrdinalIgnoreCase))
-                    {
-                        try
-                        {
-                            AtomicFileWriter.WriteAllBytesFlushed(Constants.PortableConfigPath, encryptedData);
-                            Log.Information("Memulihkan konfigurasi utama dari cadangan {BackupPath}", candidatePath);
-                        }
-                        catch { }
-                    }
-                    break;
-                }
-                catch (Exception ex) when (ex is CryptographicException || ex is IOException || ex is FormatException || ex is JsonException || ex is ArgumentException)
-                {
-                    lastDecryptEx = ex;
-                    Log.Warning(ex, "Gagal mendekripsi kandidat konfigurasi dari {Path}", candidatePath);
+                    catch { }
                 }
             }
-
-            if (loadedConfig == null)
+            else
             {
-                Log.Error(lastDecryptEx, "Seluruh kandidat file konfigurasi rusak atau gagal didekripsi dari {Path}", configPath);
+                Log.Error("Seluruh kandidat file konfigurasi rusak atau gagal didekripsi dari {Path}", configPath);
 
                 var promptResult = MessageBox.Show(
                     $"File konfigurasi di '{configPath}' rusak atau tidak dapat didekripsi.\n\n" +
@@ -187,6 +174,7 @@ public partial class App : Application
         {
             try
             {
+                wizard.Config.UpdatedAtUtcTicks = DateTime.UtcNow.Ticks;
                 string portablePath = Constants.PortableConfigPath;
                 string? dir = Path.GetDirectoryName(portablePath);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
@@ -198,18 +186,35 @@ public partial class App : Application
                 AtomicFileWriter.WriteAllBytesFlushed(portablePath, encrypted);
                 Log.Information("Konfigurasi baru berhasil disimpan ke folder program: {Path}", portablePath);
 
-                // Sinkronisasi backup ke ProgramData
-                try
+                // Sematkan langsung ke exe ujian di folder yang sama agar tetap portable walau dibuka dari ZIP
+                foreach (string exePath in EmbeddedConfigHelper.FindSiblingExamExecutables(Constants.AppDirectory))
                 {
-                    string sysPath = Constants.SystemConfigFilePath;
-                    if (!sysPath.Equals(portablePath, StringComparison.OrdinalIgnoreCase))
+                    try
                     {
-                        AtomicFileWriter.WriteAllBytesFlushed(sysPath, encrypted);
+                        EmbeddedConfigHelper.WriteEmbeddedConfig(exePath, encrypted);
+                        Log.Information("Konfigurasi disematkan ke {ExePath}", exePath);
+                    }
+                    catch (Exception embedEx)
+                    {
+                        Log.Warning(embedEx, "Gagal menyematkan konfigurasi awal ke {ExePath}", exePath);
                     }
                 }
-                catch (Exception sysEx)
+
+                // Tulis ke ProgramData hanya jika aplikasi diinstal di Program Files
+                if (Constants.IsInstalledInProgramFiles)
                 {
-                    Log.Warning(sysEx, "Tidak dapat menulis cadangan konfigurasi ke ProgramData");
+                    try
+                    {
+                        string sysPath = Constants.SystemConfigFilePath;
+                        if (!sysPath.Equals(portablePath, StringComparison.OrdinalIgnoreCase))
+                        {
+                            AtomicFileWriter.WriteAllBytesFlushed(sysPath, encrypted);
+                        }
+                    }
+                    catch (Exception sysEx)
+                    {
+                        Log.Warning(sysEx, "Tidak dapat menulis cadangan konfigurasi ke ProgramData");
+                    }
                 }
 
                 var mainWindow = new MainWindow(wizard.Config);

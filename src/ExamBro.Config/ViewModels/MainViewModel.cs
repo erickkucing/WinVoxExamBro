@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.IO.Compression;
 using System.Windows;
 using System.Windows.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -449,73 +450,33 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
-            var config = ToConfig();
-            var errors = ConfigValidator.Validate(config);
-
-            ValidationErrors.Clear();
-            bool hasFatalError = false;
-            foreach (var err in errors)
+            if (!TryValidateConfig(out var config, "Gagal menyimpan: terdapat kesalahan konfigurasi yang harus diperbaiki."))
             {
-                ValidationErrors.Add(err);
-                if (err.Severity == ValidationSeverity.Error)
-                    hasFatalError = true;
-            }
-
-            HasErrors = errors.Count > 0;
-
-            if (hasFatalError)
-            {
-                StatusMessage = "Gagal menyimpan: terdapat kesalahan konfigurasi yang harus diperbaiki.";
-                string errorList = string.Join("\n• ", errors.Where(e => e.Severity == ValidationSeverity.Error).Select(e => e.Message));
-                MessageBox.Show(
-                    $"Konfigurasi tidak dapat disimpan karena terdapat kesalahan validasi:\n\n• {errorList}",
-                    "Validasi Gagal",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
                 return;
             }
 
-            // 1. Prioritaskan penyimpanan portable langsung di folder program
-            string portableFile = Constants.PortableConfigPath;
-            string? directory = Path.GetDirectoryName(portableFile);
-            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            var (_, embeddedExes, lockedExes) = PersistConfigAndEmbed(config);
+
+            StatusMessage = $"Konfigurasi berhasil disimpan! ({DateTime.Now:HH:mm:ss})";
+            Log.Information("Konfigurasi ExamBro berhasil disimpan ke {Path}", Constants.PortableConfigPath);
+
+            if (lockedExes.Count > 0)
             {
-                Directory.CreateDirectory(directory);
+                MessageBox.Show(
+                    $"File 'exambro.cfg' berhasil disimpan, namun aplikasi ujian ({string.Join(", ", lockedExes)}) sedang berjalan sehingga konfigurasi belum bisa disematkan ke dalam .exe.\n\n" +
+                    "Tutup aplikasi ujian yang sedang berjalan lalu klik 'Simpan Konfigurasi' kembali.",
+                    "Aplikasi Ujian Sedang Aktif",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
             }
 
-            byte[] encrypted = ConfigEncryption.EncryptPortableConfig(config);
-            AtomicFileWriter.WriteAllBytesFlushed(portableFile, encrypted);
-
-            if (!string.IsNullOrEmpty(directory))
-            {
-                byte[] logoBytes = BrandingHelper.ResolveLogoBytes(config.General.LogoBase64, config.General.LogoPath);
-                if (logoBytes.Length > 0)
-                {
-                    try { AtomicFileWriter.WriteAllBytesFlushed(Path.Combine(directory, "logo.png"), logoBytes); } catch { }
-                }
-            }
-
-            // Sinkronisasi ke folder sibling jika ada (ExamBro.Exam / portable)
-            SyncToRelatedDirectories(config, encrypted);
-
-            // 2. Sinkronisasi cadangan ke ProgramData
-            try
-            {
-                string sysFile = Constants.SystemConfigFilePath;
-                AtomicFileWriter.WriteAllBytesFlushed(sysFile, encrypted);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Tidak dapat menulis cadangan konfigurasi ke ProgramData");
-            }
-
-            ConfigHash = ConfigEncryption.ComputeConfigHash(config);
-            StatusMessage = $"Konfigurasi berhasil disimpan di folder program! ({DateTime.Now:HH:mm:ss})";
-            Log.Information("Konfigurasi ExamBro berhasil disimpan ke {Path}", portableFile);
+            string embedNote = embeddedExes.Count > 0
+                ? $"\n• Konfigurasi juga disematkan langsung ke dalam: {string.Join(", ", embeddedExes)}\n  (aman walau dijalankan langsung dari ZIP atau disalin tanpa file lain)."
+                : string.Empty;
 
             MessageBox.Show(
-                $"Konfigurasi ExamBro berhasil disimpan langsung ke folder aplikasi:\n{portableFile}\n\n" +
-                "File 'exambro.cfg' tersimpan di folder program dan akan otomatis dibaca terlebih dahulu oleh ExamBro.",
+                $"Konfigurasi ExamBro berhasil disimpan ke folder aplikasi:\n{Constants.PortableConfigPath}{embedNote}",
                 "Simpan Berhasil",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -537,55 +498,143 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
-            var config = ToConfig();
-            var errors = ConfigValidator.Validate(config);
-
-            ValidationErrors.Clear();
-            bool hasFatalError = false;
-            foreach (var err in errors)
+            if (!TryValidateConfig(out var config, "Gagal menyimpan: perbaiki kesalahan konfigurasi terlebih dahulu."))
             {
-                ValidationErrors.Add(err);
-                if (err.Severity == ValidationSeverity.Error)
-                    hasFatalError = true;
-            }
-
-            HasErrors = errors.Count > 0;
-
-            if (hasFatalError)
-            {
-                StatusMessage = "Gagal menyimpan: perbaiki kesalahan konfigurasi terlebih dahulu.";
-                string errorList = string.Join("\n• ", errors.Where(e => e.Severity == ValidationSeverity.Error).Select(e => e.Message));
-                MessageBox.Show(
-                    $"Konfigurasi tidak dapat disimpan karena terdapat kesalahan validasi:\n\n• {errorList}",
-                    "Validasi Gagal",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
                 return;
             }
 
-            string targetFile = Constants.PortableConfigPath;
-            string? pDir = Path.GetDirectoryName(targetFile);
-            if (!string.IsNullOrEmpty(pDir) && !Directory.Exists(pDir))
+            var (_, embeddedExes, lockedExes) = PersistConfigAndEmbed(config);
+
+            if (lockedExes.Count > 0)
             {
-                Directory.CreateDirectory(pDir);
+                StatusMessage = "Gagal menyematkan ke .exe: aplikasi ujian sedang berjalan.";
+                MessageBox.Show(
+                    $"Tidak dapat menyematkan konfigurasi ke '{string.Join(", ", lockedExes)}' karena aplikasi ujian sedang aktif.\n\n" +
+                    "Tutup aplikasi ujian terlebih dahulu lalu klik 'Simpan Portable' ulang.",
+                    "Aplikasi Ujian Sedang Berjalan",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
             }
 
-            byte[] encrypted = ConfigEncryption.EncryptPortableConfig(config);
-            AtomicFileWriter.WriteAllBytesFlushed(targetFile, encrypted);
+            StatusMessage = $"Konfigurasi portable berhasil disimpan di folder program! ({DateTime.Now:HH:mm:ss})";
+            Log.Information("Konfigurasi ExamBro portable berhasil disimpan ke {Path}", Constants.PortableConfigPath);
 
-            if (!string.IsNullOrEmpty(pDir))
+            if (embeddedExes.Count > 0)
             {
-                byte[] logoBytes = BrandingHelper.ResolveLogoBytes(config.General.LogoBase64, config.General.LogoPath);
-                if (logoBytes.Length > 0)
+                var zipChoice = MessageBox.Show(
+                    $"Konfigurasi berhasil disimpan ke 'exambro.cfg' dan disematkan langsung ke dalam aplikasi ujian ({string.Join(", ", embeddedExes)}).\n\n" +
+                    "Apakah Anda ingin langsung membuat file paket '.zip' ringan siap distribusi ke siswa (otomatis tanpa aplikasi Pengaturan)?",
+                    "Simpan Portable Berhasil",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+
+                if (zipChoice == MessageBoxResult.Yes)
                 {
-                    try { AtomicFileWriter.WriteAllBytesFlushed(Path.Combine(pDir, "logo.png"), logoBytes); } catch { }
+                    ExportLightweightPortableZip();
                 }
             }
+            else
+            {
+                MessageBox.Show(
+                    $"Konfigurasi ExamBro versi Portable berhasil disimpan langsung ke folder aplikasi:\n{Constants.PortableConfigPath}\n\n" +
+                    "Letakkan 'exambro.cfg' di folder yang sama dengan aplikasi ujian sebelum disalin ke komputer siswa.",
+                    "Simpan Portable Berhasil",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Gagal menyimpan konfigurasi portable");
+            StatusMessage = $"Kesalahan saat menyimpan portable: {ex.Message}";
+            MessageBox.Show(
+                $"Terjadi kesalahan saat menyimpan file konfigurasi portable: {ex.Message}",
+                "Kesalahan",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
 
-            // Sinkronisasi ke folder sibling jika ada (ExamBro.Exam / portable)
-            SyncToRelatedDirectories(config, encrypted);
+    private bool TryValidateConfig(out ExamConfig config, string failureStatus)
+    {
+        config = ToConfig();
+        var errors = ConfigValidator.Validate(config);
 
-            // Sinkronisasi cadangan ke ProgramData
+        ValidationErrors.Clear();
+        bool hasFatalError = false;
+        foreach (var err in errors)
+        {
+            ValidationErrors.Add(err);
+            if (err.Severity == ValidationSeverity.Error)
+                hasFatalError = true;
+        }
+
+        HasErrors = errors.Count > 0;
+
+        if (hasFatalError)
+        {
+            StatusMessage = failureStatus;
+            string errorList = string.Join("\n• ", errors.Where(e => e.Severity == ValidationSeverity.Error).Select(e => e.Message));
+            MessageBox.Show(
+                $"Konfigurasi tidak dapat disimpan karena terdapat kesalahan validasi:\n\n• {errorList}",
+                "Validasi Gagal",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            return false;
+        }
+
+        return true;
+    }
+
+    private (byte[] EncryptedBytes, List<string> EmbeddedExes, List<string> LockedExes) PersistConfigAndEmbed(ExamConfig config)
+    {
+        config.UpdatedAtUtcTicks = DateTime.UtcNow.Ticks;
+
+        string portableFile = Constants.PortableConfigPath;
+        string? directory = Path.GetDirectoryName(portableFile);
+        if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        byte[] encrypted = ConfigEncryption.EncryptPortableConfig(config);
+        AtomicFileWriter.WriteAllBytesFlushed(portableFile, encrypted);
+
+        if (!string.IsNullOrEmpty(directory))
+        {
+            byte[] logoBytes = BrandingHelper.ResolveLogoBytes(config.General.LogoBase64, config.General.LogoPath);
+            if (logoBytes.Length > 0)
+            {
+                try { AtomicFileWriter.WriteAllBytesFlushed(Path.Combine(directory, "logo.png"), logoBytes); } catch { }
+            }
+        }
+
+        var embeddedExes = new List<string>();
+        var lockedExes = new List<string>();
+
+        foreach (string exePath in EmbeddedConfigHelper.FindSiblingExamExecutables(Constants.AppDirectory))
+        {
+            string exeName = Path.GetFileName(exePath);
+            try
+            {
+                EmbeddedConfigHelper.WriteEmbeddedConfig(exePath, encrypted);
+                embeddedExes.Add(exeName);
+                Log.Information("Konfigurasi berhasil disematkan ke {ExePath}", exePath);
+            }
+            catch (Exception ex)
+            {
+                lockedExes.Add(exeName);
+                Log.Warning(ex, "Gagal menyematkan konfigurasi ke {ExePath}", exePath);
+            }
+        }
+
+        // Sinkronisasi ke folder sibling jika ada (ExamBro.Exam / portable)
+        SyncToRelatedDirectories(config, encrypted);
+
+        // Tulis cadangan ke ProgramData HANYA jika aplikasi terinstal di Program Files
+        if (Constants.IsInstalledInProgramFiles)
+        {
             try
             {
                 string sysFile = Constants.SystemConfigFilePath;
@@ -595,25 +644,95 @@ public partial class MainViewModel : ObservableObject
             {
                 Log.Warning(ex, "Tidak dapat menulis cadangan konfigurasi ke ProgramData");
             }
+        }
 
-            ConfigHash = ConfigEncryption.ComputeConfigHash(config);
-            StatusMessage = $"Konfigurasi portable berhasil disimpan di folder program! ({DateTime.Now:HH:mm:ss})";
-            Log.Information("Konfigurasi ExamBro portable berhasil disimpan ke {Path}", targetFile);
+        ConfigHash = ConfigEncryption.ComputeConfigHash(config);
+        return (encrypted, embeddedExes, lockedExes);
+    }
+
+    private void ExportLightweightPortableZip()
+    {
+        var saveDialog = new SaveFileDialog
+        {
+            Title = "Simpan Paket ZIP Distribusi Siswa (Tanpa Aplikasi Pengaturan)",
+            Filter = "Paket ZIP (*.zip)|*.zip",
+            FileName = "LouisVoxExamBro-Portable.zip",
+            DefaultExt = ".zip"
+        };
+
+        if (saveDialog.ShowDialog() != true)
+            return;
+
+        string appDir = Constants.AppDirectory;
+        var siblingExes = EmbeddedConfigHelper.FindSiblingExamExecutables(appDir);
+        string? primaryExe = siblingExes.FirstOrDefault(p =>
+            Path.GetFileName(p).Equals("LouisVox ExamBro.exe", StringComparison.OrdinalIgnoreCase))
+            ?? siblingExes.FirstOrDefault();
+
+        if (string.IsNullOrEmpty(primaryExe) || !File.Exists(primaryExe))
+        {
+            MessageBox.Show(
+                "Berkas aplikasi ujian ('LouisVox ExamBro.exe' atau 'ExamBro.Exam.exe') tidak ditemukan di folder aplikasi.",
+                "Gagal Membuat ZIP",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        string targetZip = saveDialog.FileName;
+        string tempZip = $"{targetZip}.{Guid.NewGuid():N}.tmp";
+
+        try
+        {
+            const string rootPrefix = "LouisVoxExamBro/";
+            using (var zipStream = new FileStream(tempZip, FileMode.Create, FileAccess.Write, FileShare.None))
+            using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
+            {
+                archive.CreateEntryFromFile(primaryExe, rootPrefix + Path.GetFileName(primaryExe), CompressionLevel.Optimal);
+
+                string cfgPath = Constants.PortableConfigPath;
+                if (File.Exists(cfgPath))
+                {
+                    archive.CreateEntryFromFile(cfgPath, rootPrefix + "exambro.cfg", CompressionLevel.Optimal);
+                }
+
+                string[] optionalAssets =
+                {
+                    "logo.png",
+                    "exam.ico",
+                    "PETUNJUK_PENGGUNAAN_DAN_INSTALASI.txt",
+                    "PETUNJUK_PENGGUNAAN.txt"
+                };
+
+                foreach (string asset in optionalAssets)
+                {
+                    string assetPath = Path.Combine(appDir, asset);
+                    if (File.Exists(assetPath))
+                    {
+                        archive.CreateEntryFromFile(assetPath, rootPrefix + asset, CompressionLevel.Optimal);
+                    }
+                }
+            }
+
+            File.Move(tempZip, targetZip, overwrite: true);
+
+            double sizeMb = new FileInfo(targetZip).Length / (1024.0 * 1024.0);
+            StatusMessage = $"Paket ZIP siswa dibuat: {Path.GetFileName(targetZip)} ({sizeMb:0.0} MB)";
+            Log.Information("Paket ZIP portable ringan dibuat di {Path} ({SizeMb:0.0} MB)", targetZip, sizeMb);
 
             MessageBox.Show(
-                $"Konfigurasi ExamBro versi Portable berhasil disimpan langsung ke folder aplikasi:\n{targetFile}\n\n" +
-                "File 'exambro.cfg' kini tersimpan di folder program dan akan otomatis dibaca terlebih dahulu oleh ExamBro.\n\n" +
-                "Folder ini sekarang dapat langsung disalin ke flashdisk atau komputer peserta ujian tanpa kehilangan konfigurasi.",
-                "Simpan Portable Berhasil",
+                $"Paket distribusi siswa berhasil dibuat:\n{targetZip} ({sizeMb:0.0} MB)\n\n" +
+                "Paket hanya berisi aplikasi ujian yang sudah membawa konfigurasi Anda (tanpa aplikasi Pengaturan).",
+                "Paket ZIP Siap Dikirim",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Gagal menyimpan konfigurasi portable");
-            StatusMessage = $"Kesalahan saat menyimpan portable: {ex.Message}";
+            try { if (File.Exists(tempZip)) File.Delete(tempZip); } catch { }
+            Log.Error(ex, "Gagal membuat paket ZIP portable ke {Path}", targetZip);
             MessageBox.Show(
-                $"Terjadi kesalahan saat menyimpan file konfigurasi portable: {ex.Message}",
+                $"Gagal membuat paket ZIP distribusi: {ex.Message}",
                 "Kesalahan",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
@@ -654,6 +773,11 @@ public partial class MainViewModel : ObservableObject
                         {
                             try { AtomicFileWriter.WriteAllBytesFlushed(Path.Combine(folder, "logo.png"), logoBytes); } catch { }
                         }
+
+                        foreach (string exePath in EmbeddedConfigHelper.FindSiblingExamExecutables(folder))
+                        {
+                            try { EmbeddedConfigHelper.WriteEmbeddedConfig(exePath, encryptedBytes); } catch { }
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -691,6 +815,7 @@ public partial class MainViewModel : ObservableObject
         try
         {
             var config = ToConfig();
+            config.UpdatedAtUtcTicks = DateTime.UtcNow.Ticks;
             var saveDialog = new SaveFileDialog
             {
                 Title = "Ekspor Konfigurasi ExamBro",
