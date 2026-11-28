@@ -21,6 +21,7 @@ public class ProcessMonitorService : IDisposable
     private readonly HashSet<string> _blacklist;
     private readonly int _currentPid;
     private readonly int _currentSessionId;
+    private readonly object _timerLock = new();
     private int _isScanning;
     private volatile bool _disposed;
 
@@ -113,9 +114,12 @@ public class ProcessMonitorService : IDisposable
     /// </summary>
     public void Start()
     {
-        if (_disposed) return;
-        Log.Information("Starting ProcessMonitorService with {BlacklistCount} blacklisted signatures", _blacklist.Count);
-        try { _timer.Change(0, 1500); } catch (ObjectDisposedException) { }
+        lock (_timerLock)
+        {
+            if (_disposed) return;
+            Log.Information("Starting ProcessMonitorService with {BlacklistCount} blacklisted signatures", _blacklist.Count);
+            _timer.Change(0, 1500);
+        }
     }
 
     /// <summary>
@@ -123,9 +127,12 @@ public class ProcessMonitorService : IDisposable
     /// </summary>
     public void Stop()
     {
-        if (_disposed) return;
-        try { _timer.Change(Timeout.Infinite, Timeout.Infinite); } catch (ObjectDisposedException) { }
-        Log.Information("ProcessMonitorService stopped");
+        lock (_timerLock)
+        {
+            if (_disposed) return;
+            _timer.Change(Timeout.Infinite, Timeout.Infinite);
+            Log.Information("ProcessMonitorService stopped");
+        }
     }
 
     private void OnTimerTick(object? state)
@@ -547,13 +554,16 @@ public class ProcessMonitorService : IDisposable
 
     protected virtual void Dispose(bool disposing)
     {
-        if (!_disposed)
+        lock (_timerLock)
         {
-            _disposed = true;
-            if (disposing)
+            if (!_disposed)
             {
-                try { _timer.Change(Timeout.Infinite, Timeout.Infinite); } catch (ObjectDisposedException) { }
-                _timer.Dispose();
+                _disposed = true;
+                if (disposing)
+                {
+                    _timer.Change(Timeout.Infinite, Timeout.Infinite);
+                    _timer.Dispose();
+                }
             }
         }
     }

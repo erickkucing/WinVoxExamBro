@@ -22,4 +22,7 @@
   <ItemGroup>
     <ProjectReference Include="..\ExamBro.Core\ExamBro.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\ExamBro.Exam\Helpers\PasswordRevealHelper.cs" Link="Helpers\PasswordRevealHelper.cs" />
+  </ItemGroup>
 </Project>

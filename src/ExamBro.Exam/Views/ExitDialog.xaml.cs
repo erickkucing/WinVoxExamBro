@@ -1,10 +1,10 @@
 using System.Windows;
-using System.Windows.Input;
 using System.Windows.Threading;
 using ExamBro.Core;
 using ExamBro.Core.Models;
 using ExamBro.Core.Security;
 using ExamBro.Exam.Helpers;
+using ExamBro.WpfHelpers;
 using Serilog;
 
 namespace ExamBro.Exam.Views;
@@ -21,6 +21,7 @@ public partial class ExitDialog : Window
 
     private readonly ExamConfig _config;
     private readonly PasswordAttemptTracker _attemptTracker;
+    private readonly PasswordRevealBinding _passwordReveal;
     private int _lockoutSecondsRemaining;
     private readonly DispatcherTimer _lockoutTimer;
 
@@ -29,6 +30,12 @@ public partial class ExitDialog : Window
         InitializeComponent();
         _config = config;
         _attemptTracker = attemptTracker ?? new PasswordAttemptTracker();
+        _passwordReveal = PasswordRevealBinding.Bind(
+            pwdExit,
+            txtExitPasswordVisible,
+            btnTogglePassword,
+            onInputChanged: HideError,
+            onEnterPressed: AttemptExit);
 
         byte[] logoBytes = BrandingHelper.ResolveLogoBytes(_config.General.LogoBase64, _config.General.LogoPath);
         var logoImage = ImageHelper.CreateImageSource(logoBytes);
@@ -45,36 +52,21 @@ public partial class ExitDialog : Window
 
         Loaded += (_, _) =>
         {
+            Activate();
             if (_attemptTracker.IsLockedOut(out int remaining))
             {
                 ApplyLockoutUi(remaining);
-                btnCancel.Focus();
             }
             else
             {
-                pwdExit.Focus();
-                Keyboard.Focus(pwdExit);
+                Dispatcher.BeginInvoke(DispatcherPriority.Input, () => _passwordReveal.FocusActive());
             }
         };
-        Closing += (_, _) => _lockoutTimer.Stop();
-    }
-
-    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Escape)
+        Closing += (_, _) =>
         {
-            e.Handled = true;
-            DialogResult = false;
-            Close();
-        }
-    }
-
-    private void PwdExit_KeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter)
-        {
-            AttemptExit();
-        }
+            _lockoutTimer.Stop();
+            _passwordReveal.Reset();
+        };
     }
 
     private void BtnConfirmExit_Click(object sender, RoutedEventArgs e)
@@ -96,39 +88,15 @@ public partial class ExitDialog : Window
             return;
         }
 
-        string input = pwdExit.Password;
+        string input = _passwordReveal.GetPassword();
         if (string.IsNullOrEmpty(input))
         {
             ShowError("Masukkan kata sandi pengawas.");
+            _passwordReveal.FocusActive();
             return;
         }
 
-        bool isValid = false;
-
-        if (!string.IsNullOrEmpty(_config.Admin.ProctorPasswordHash) &&
-            !string.IsNullOrEmpty(_config.Admin.ProctorPasswordSalt))
-        {
-            isValid = PasswordHasher.VerifyPassword(
-                input,
-                _config.Admin.ProctorPasswordHash,
-                _config.Admin.ProctorPasswordSalt);
-        }
-
-        if (!isValid &&
-            !string.IsNullOrEmpty(_config.Admin.AdminPasswordHash) &&
-            !string.IsNullOrEmpty(_config.Admin.AdminPasswordSalt))
-        {
-            isValid = PasswordHasher.VerifyPassword(
-                input,
-                _config.Admin.AdminPasswordHash,
-                _config.Admin.AdminPasswordSalt);
-        }
-
-        if (!isValid && string.IsNullOrEmpty(_config.Admin.ProctorPasswordHash) &&
-            string.IsNullOrEmpty(_config.Admin.AdminPasswordHash))
-        {
-            isValid = input == "admin";
-        }
+        bool isValid = PasswordVerifier.VerifyProctorOrAdmin(_config, input);
 
         if (isValid)
         {
@@ -155,8 +123,8 @@ public partial class ExitDialog : Window
             else
             {
                 ShowError($"Kata sandi salah! Sisa percobaan: {remaining}");
-                pwdExit.Password = string.Empty;
-                pwdExit.Focus();
+                _passwordReveal.Clear();
+                _passwordReveal.FocusActive();
             }
         }
     }
@@ -166,8 +134,7 @@ public partial class ExitDialog : Window
         _lockoutSecondsRemaining = Math.Max(1, remainingSeconds);
 
         btnConfirmExit.IsEnabled = false;
-        pwdExit.IsEnabled = false;
-        pwdExit.Password = string.Empty;
+        _passwordReveal.SetEnabled(false);
 
         txtError.Visibility = Visibility.Collapsed;
         txtLockout.Visibility = Visibility.Visible;
@@ -184,17 +151,25 @@ public partial class ExitDialog : Window
             _lockoutTimer.Stop();
 
             btnConfirmExit.IsEnabled = true;
-            pwdExit.IsEnabled = true;
+            _passwordReveal.SetEnabled(true);
             txtLockout.Visibility = Visibility.Collapsed;
             txtLockout.Text = string.Empty;
 
-            pwdExit.Focus();
-            Keyboard.Focus(pwdExit);
+            _passwordReveal.FocusActive();
         }
         else
         {
             _lockoutSecondsRemaining = trackerRemaining;
             txtLockout.Text = $"Terlalu banyak percobaan gagal. Silakan tunggu {_lockoutSecondsRemaining} detik.";
+        }
+    }
+
+    private void HideError()
+    {
+        if (txtError.Visibility == Visibility.Visible)
+        {
+            txtError.Visibility = Visibility.Collapsed;
+            txtError.Text = string.Empty;
         }
     }
 

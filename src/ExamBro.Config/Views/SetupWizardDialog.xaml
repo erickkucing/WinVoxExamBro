@@ -85,16 +85,100 @@
                                    Foreground="{StaticResource SecondaryTextBrush}" 
                                    Margin="0,0,0,16"/>
 
-                        <TextBlock Text="Password Admin Baru (minimal 6 karakter):" FontWeight="SemiBold" Margin="0,0,0,2"/>
-                        <PasswordBox x:Name="TxtAdminPassword" Height="32" Margin="0,0,0,10"/>
+                        <Label Target="{Binding ElementName=TxtAdminPassword}"
+                               Content="Password Admin Baru (minimal 6 karakter):"
+                               FontWeight="SemiBold"
+                               Foreground="#1E293B"
+                               Padding="0"
+                               Margin="0,0,0,4"/>
+                        <Border Style="{StaticResource ConfigPasswordFieldBorderStyle}" Margin="0,0,0,10">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <PasswordBox x:Name="TxtAdminPassword"
+                                             Grid.Column="0"
+                                             Style="{x:Null}"
+                                             Background="Transparent"
+                                             BorderThickness="0"
+                                             FontSize="14"
+                                             Foreground="#0F172A"
+                                             CaretBrush="#0F172A"
+                                             Padding="10,0,4,0"
+                                             VerticalAlignment="Stretch"
+                                             VerticalContentAlignment="Center"
+                                             HorizontalContentAlignment="Left"
+                                             AutomationProperties.Name="Password admin baru"/>
+                                <TextBox x:Name="TxtAdminPasswordVisible"
+                                         Grid.Column="0"
+                                         Style="{x:Null}"
+                                         Visibility="Collapsed"
+                                         Background="Transparent"
+                                         BorderThickness="0"
+                                         FontSize="14"
+                                         Foreground="#0F172A"
+                                         CaretBrush="#0F172A"
+                                         Padding="10,0,4,0"
+                                         VerticalAlignment="Stretch"
+                                         VerticalContentAlignment="Center"
+                                         HorizontalContentAlignment="Left"
+                                         AutomationProperties.Name="Password admin baru (terlihat)"/>
+                                <ToggleButton x:Name="BtnToggleAdminPassword"
+                                              Grid.Column="1"
+                                              Style="{StaticResource ConfigPasswordRevealToggleStyle}"/>
+                            </Grid>
+                        </Border>
 
-                        <TextBlock Text="Konfirmasi Password Admin:" FontWeight="SemiBold" Margin="0,0,0,2"/>
-                        <PasswordBox x:Name="TxtAdminPasswordConfirm" Height="32" Margin="0,0,0,10"/>
+                        <Label Target="{Binding ElementName=TxtAdminPasswordConfirm}"
+                               Content="Konfirmasi Password Admin:"
+                               FontWeight="SemiBold"
+                               Foreground="#1E293B"
+                               Padding="0"
+                               Margin="0,0,0,4"/>
+                        <Border Style="{StaticResource ConfigPasswordFieldBorderStyle}" Margin="0,0,0,10">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <PasswordBox x:Name="TxtAdminPasswordConfirm"
+                                             Grid.Column="0"
+                                             Style="{x:Null}"
+                                             Background="Transparent"
+                                             BorderThickness="0"
+                                             FontSize="14"
+                                             Foreground="#0F172A"
+                                             CaretBrush="#0F172A"
+                                             Padding="10,0,4,0"
+                                             VerticalAlignment="Stretch"
+                                             VerticalContentAlignment="Center"
+                                             HorizontalContentAlignment="Left"
+                                             AutomationProperties.Name="Konfirmasi password admin"/>
+                                <TextBox x:Name="TxtAdminPasswordConfirmVisible"
+                                         Grid.Column="0"
+                                         Style="{x:Null}"
+                                         Visibility="Collapsed"
+                                         Background="Transparent"
+                                         BorderThickness="0"
+                                         FontSize="14"
+                                         Foreground="#0F172A"
+                                         CaretBrush="#0F172A"
+                                         Padding="10,0,4,0"
+                                         VerticalAlignment="Stretch"
+                                         VerticalContentAlignment="Center"
+                                         HorizontalContentAlignment="Left"
+                                         AutomationProperties.Name="Konfirmasi password admin (terlihat)"/>
+                                <ToggleButton x:Name="BtnToggleAdminPasswordConfirm"
+                                              Grid.Column="1"
+                                              Style="{StaticResource ConfigPasswordRevealToggleStyle}"/>
+                            </Grid>
+                        </Border>
 
-                        <TextBlock x:Name="TxtAdminError" 
-                                   Foreground="{StaticResource ErrorBrush}" 
-                                   FontSize="12" 
-                                   TextWrapping="Wrap" 
+                        <TextBlock x:Name="TxtAdminError"
+                                   Foreground="#B91C1C"
+                                   FontSize="12"
+                                   TextWrapping="Wrap"
                                    Visibility="Collapsed"/>
                     </StackPanel>
                 </Grid>
@@ -102,27 +186,111 @@
                 <!-- Step 3: Proctor Password -->
                 <Grid x:Name="PanelStep3" Visibility="Collapsed">
                     <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="Atur Password Pengawas (Proctor)" 
-                                   FontSize="18" 
-                                   FontWeight="Bold" 
-                                   Foreground="{StaticResource PrimaryBrush}" 
+                        <TextBlock Text="Atur Password Pengawas (Proctor)"
+                                   FontSize="18"
+                                   FontWeight="Bold"
+                                   Foreground="{StaticResource PrimaryBrush}"
                                    Margin="0,0,0,6"/>
-                        <TextBlock Text="Password ini digunakan oleh pengawas di ruang ujian jika peserta membutuhkan keluar darurat atau membuka kunci ujian." 
-                                   TextWrapping="Wrap" 
-                                   FontSize="13" 
-                                   Foreground="{StaticResource SecondaryTextBrush}" 
+                        <TextBlock Text="Password ini digunakan oleh pengawas di ruang ujian jika peserta membutuhkan keluar darurat atau membuka kunci ujian."
+                                   TextWrapping="Wrap"
+                                   FontSize="13"
+                                   Foreground="#475569"
                                    Margin="0,0,0,16"/>
 
-                        <TextBlock Text="Password Pengawas Baru (minimal 6 karakter):" FontWeight="SemiBold" Margin="0,0,0,2"/>
-                        <PasswordBox x:Name="TxtProctorPassword" Height="32" Margin="0,0,0,10"/>
+                        <Label Target="{Binding ElementName=TxtProctorPassword}"
+                               Content="Password Pengawas Baru (minimal 6 karakter):"
+                               FontWeight="SemiBold"
+                               Foreground="#1E293B"
+                               Padding="0"
+                               Margin="0,0,0,4"/>
+                        <Border Style="{StaticResource ConfigPasswordFieldBorderStyle}" Margin="0,0,0,10">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <PasswordBox x:Name="TxtProctorPassword"
+                                             Grid.Column="0"
+                                             Style="{x:Null}"
+                                             Background="Transparent"
+                                             BorderThickness="0"
+                                             FontSize="14"
+                                             Foreground="#0F172A"
+                                             CaretBrush="#0F172A"
+                                             Padding="10,0,4,0"
+                                             VerticalAlignment="Stretch"
+                                             VerticalContentAlignment="Center"
+                                             HorizontalContentAlignment="Left"
+                                             AutomationProperties.Name="Password pengawas baru"/>
+                                <TextBox x:Name="TxtProctorPasswordVisible"
+                                         Grid.Column="0"
+                                         Style="{x:Null}"
+                                         Visibility="Collapsed"
+                                         Background="Transparent"
+                                         BorderThickness="0"
+                                         FontSize="14"
+                                         Foreground="#0F172A"
+                                         CaretBrush="#0F172A"
+                                         Padding="10,0,4,0"
+                                         VerticalAlignment="Stretch"
+                                         VerticalContentAlignment="Center"
+                                         HorizontalContentAlignment="Left"
+                                         AutomationProperties.Name="Password pengawas baru (terlihat)"/>
+                                <ToggleButton x:Name="BtnToggleProctorPassword"
+                                              Grid.Column="1"
+                                              Style="{StaticResource ConfigPasswordRevealToggleStyle}"/>
+                            </Grid>
+                        </Border>
 
-                        <TextBlock Text="Konfirmasi Password Pengawas:" FontWeight="SemiBold" Margin="0,0,0,2"/>
-                        <PasswordBox x:Name="TxtProctorPasswordConfirm" Height="32" Margin="0,0,0,10"/>
+                        <Label Target="{Binding ElementName=TxtProctorPasswordConfirm}"
+                               Content="Konfirmasi Password Pengawas:"
+                               FontWeight="SemiBold"
+                               Foreground="#1E293B"
+                               Padding="0"
+                               Margin="0,0,0,4"/>
+                        <Border Style="{StaticResource ConfigPasswordFieldBorderStyle}" Margin="0,0,0,10">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <PasswordBox x:Name="TxtProctorPasswordConfirm"
+                                             Grid.Column="0"
+                                             Style="{x:Null}"
+                                             Background="Transparent"
+                                             BorderThickness="0"
+                                             FontSize="14"
+                                             Foreground="#0F172A"
+                                             CaretBrush="#0F172A"
+                                             Padding="10,0,4,0"
+                                             VerticalAlignment="Stretch"
+                                             VerticalContentAlignment="Center"
+                                             HorizontalContentAlignment="Left"
+                                             AutomationProperties.Name="Konfirmasi password pengawas"/>
+                                <TextBox x:Name="TxtProctorPasswordConfirmVisible"
+                                         Grid.Column="0"
+                                         Style="{x:Null}"
+                                         Visibility="Collapsed"
+                                         Background="Transparent"
+                                         BorderThickness="0"
+                                         FontSize="14"
+                                         Foreground="#0F172A"
+                                         CaretBrush="#0F172A"
+                                         Padding="10,0,4,0"
+                                         VerticalAlignment="Stretch"
+                                         VerticalContentAlignment="Center"
+                                         HorizontalContentAlignment="Left"
+                                         AutomationProperties.Name="Konfirmasi password pengawas (terlihat)"/>
+                                <ToggleButton x:Name="BtnToggleProctorPasswordConfirm"
+                                              Grid.Column="1"
+                                              Style="{StaticResource ConfigPasswordRevealToggleStyle}"/>
+                            </Grid>
+                        </Border>
 
-                        <TextBlock x:Name="TxtProctorError" 
-                                   Foreground="{StaticResource ErrorBrush}" 
-                                   FontSize="12" 
-                                   TextWrapping="Wrap" 
+                        <TextBlock x:Name="TxtProctorError"
+                                   Foreground="#B91C1C"
+                                   FontSize="12"
+                                   TextWrapping="Wrap"
                                    Visibility="Collapsed"/>
                     </StackPanel>
                 </Grid>
@@ -212,10 +380,11 @@
         <!-- Bottom Controls -->
         <Border Grid.Row="2" Background="#F5F5F5" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="16,10">
             <Grid>
-                <Button Content="Batal" 
-                        HorizontalAlignment="Left" 
-                        Style="{StaticResource SecondaryButton}" 
-                        Width="80" 
+                <Button Content="Batal"
+                        IsCancel="True"
+                        HorizontalAlignment="Left"
+                        Style="{StaticResource SecondaryButton}"
+                        Width="80"
                         Click="BtnCancel_Click"/>
 
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">

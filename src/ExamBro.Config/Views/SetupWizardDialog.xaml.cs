@@ -1,6 +1,8 @@
 using System.Windows;
+using System.Windows.Threading;
 using ExamBro.Core.Models;
 using ExamBro.Core.Security;
+using ExamBro.WpfHelpers;
 using Serilog;
 
 namespace ExamBro.Config.Views;
@@ -12,13 +14,46 @@ namespace ExamBro.Config.Views;
 public partial class SetupWizardDialog : Window
 {
     private int _currentStep;
+    private readonly PasswordRevealBinding _adminReveal;
+    private readonly PasswordRevealBinding _adminConfirmReveal;
+    private readonly PasswordRevealBinding _proctorReveal;
+    private readonly PasswordRevealBinding _proctorConfirmReveal;
 
     public ExamConfig? Config { get; private set; }
 
     public SetupWizardDialog()
     {
         InitializeComponent();
+
+        Action clearAdminError = () => TxtAdminError.Visibility = Visibility.Collapsed;
+        Action clearProctorError = () => TxtProctorError.Visibility = Visibility.Collapsed;
+
+        _adminReveal = PasswordRevealBinding.Bind(TxtAdminPassword, TxtAdminPasswordVisible, BtnToggleAdminPassword, clearAdminError, AdvanceFromCurrentStep);
+        _adminConfirmReveal = PasswordRevealBinding.Bind(TxtAdminPasswordConfirm, TxtAdminPasswordConfirmVisible, BtnToggleAdminPasswordConfirm, clearAdminError, AdvanceFromCurrentStep);
+        _proctorReveal = PasswordRevealBinding.Bind(TxtProctorPassword, TxtProctorPasswordVisible, BtnToggleProctorPassword, clearProctorError, AdvanceFromCurrentStep);
+        _proctorConfirmReveal = PasswordRevealBinding.Bind(TxtProctorPasswordConfirm, TxtProctorPasswordConfirmVisible, BtnToggleProctorPasswordConfirm, clearProctorError, AdvanceFromCurrentStep);
+
+        Closing += (_, _) =>
+        {
+            _adminReveal.Reset();
+            _adminConfirmReveal.Reset();
+            _proctorReveal.Reset();
+            _proctorConfirmReveal.Reset();
+        };
+
         UpdateStepView();
+    }
+
+    private void AdvanceFromCurrentStep()
+    {
+        if (!ValidateCurrentStep())
+            return;
+
+        if (_currentStep < 4)
+        {
+            _currentStep++;
+            UpdateStepView();
+        }
     }
 
     private void UpdateStepView()
@@ -40,11 +75,11 @@ public partial class SetupWizardDialog : Window
                 break;
             case 1:
                 TxtHeaderSubtitle.Text = "Langkah 2 dari 5: Password Administrator";
-                TxtAdminPassword.Focus();
+                Dispatcher.BeginInvoke(DispatcherPriority.Input, () => _adminReveal.FocusActive());
                 break;
             case 2:
                 TxtHeaderSubtitle.Text = "Langkah 3 dari 5: Password Pengawas (Proctor)";
-                TxtProctorPassword.Focus();
+                Dispatcher.BeginInvoke(DispatcherPriority.Input, () => _proctorReveal.FocusActive());
                 break;
             case 3:
                 TxtHeaderSubtitle.Text = "Langkah 4 dari 5: Alamat URL Ujian";
@@ -59,14 +94,7 @@ public partial class SetupWizardDialog : Window
 
     private void BtnNext_Click(object sender, RoutedEventArgs e)
     {
-        if (!ValidateCurrentStep())
-            return;
-
-        if (_currentStep < 4)
-        {
-            _currentStep++;
-            UpdateStepView();
-        }
+        AdvanceFromCurrentStep();
     }
 
     private void BtnBack_Click(object sender, RoutedEventArgs e)
@@ -86,14 +114,14 @@ public partial class SetupWizardDialog : Window
                 return true;
 
             case 1:
-                string adminPass = TxtAdminPassword.Password;
-                string adminConfirm = TxtAdminPasswordConfirm.Password;
+                string adminPass = _adminReveal.GetPassword();
+                string adminConfirm = _adminConfirmReveal.GetPassword();
 
                 if (string.IsNullOrEmpty(adminPass) || adminPass.Length < 6)
                 {
                     TxtAdminError.Text = "Password administrator harus minimal 6 karakter.";
                     TxtAdminError.Visibility = Visibility.Visible;
-                    TxtAdminPassword.Focus();
+                    _adminReveal.FocusActive();
                     return false;
                 }
 
@@ -101,7 +129,7 @@ public partial class SetupWizardDialog : Window
                 {
                     TxtAdminError.Text = "Konfirmasi password administrator tidak cocok.";
                     TxtAdminError.Visibility = Visibility.Visible;
-                    TxtAdminPasswordConfirm.Focus();
+                    _adminConfirmReveal.FocusActive();
                     return false;
                 }
 
@@ -109,14 +137,14 @@ public partial class SetupWizardDialog : Window
                 return true;
 
             case 2:
-                string proctorPass = TxtProctorPassword.Password;
-                string proctorConfirm = TxtProctorPasswordConfirm.Password;
+                string proctorPass = _proctorReveal.GetPassword();
+                string proctorConfirm = _proctorConfirmReveal.GetPassword();
 
                 if (string.IsNullOrEmpty(proctorPass) || proctorPass.Length < 6)
                 {
                     TxtProctorError.Text = "Password pengawas harus minimal 6 karakter.";
                     TxtProctorError.Visibility = Visibility.Visible;
-                    TxtProctorPassword.Focus();
+                    _proctorReveal.FocusActive();
                     return false;
                 }
 
@@ -124,7 +152,7 @@ public partial class SetupWizardDialog : Window
                 {
                     TxtProctorError.Text = "Konfirmasi password pengawas tidak cocok.";
                     TxtProctorError.Visibility = Visibility.Visible;
-                    TxtProctorPasswordConfirm.Focus();
+                    _proctorConfirmReveal.FocusActive();
                     return false;
                 }
 
@@ -165,16 +193,14 @@ public partial class SetupWizardDialog : Window
         {
             var config = ExamConfig.CreateDefault();
 
-            // Setup credentials
-            var (adminHash, adminSalt) = PasswordHasher.HashPassword(TxtAdminPassword.Password);
+            var (adminHash, adminSalt) = PasswordHasher.HashPassword(_adminReveal.GetPassword());
             config.Admin.AdminPasswordHash = adminHash;
             config.Admin.AdminPasswordSalt = adminSalt;
 
-            var (proctorHash, proctorSalt) = PasswordHasher.HashPassword(TxtProctorPassword.Password);
+            var (proctorHash, proctorSalt) = PasswordHasher.HashPassword(_proctorReveal.GetPassword());
             config.Admin.ProctorPasswordHash = proctorHash;
             config.Admin.ProctorPasswordSalt = proctorSalt;
 
-            // Setup URL
             string startUrl = TxtStartUrl.Text.Trim();
             config.General.StartUrl = startUrl;
             bool autoAllow = ChkAutoAllowHost.IsChecked == true;

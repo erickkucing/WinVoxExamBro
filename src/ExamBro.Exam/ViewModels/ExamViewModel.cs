@@ -37,6 +37,9 @@ public partial class ExamViewModel : ObservableObject, IDisposable
     private bool _canGoForward;
 
     [ObservableProperty]
+    private bool _canReload = true;
+
+    [ObservableProperty]
     private string _clockTime = string.Empty;
 
     public NetworkPingService PingService => _pingService;
@@ -88,6 +91,7 @@ public partial class ExamViewModel : ObservableObject, IDisposable
     {
         AppTitle = string.IsNullOrWhiteSpace(config.General.AppTitle) ? BrandingHelper.DefaultAppTitle : config.General.AppTitle;
         IsToolbarVisible = config.General.ShowToolbar;
+        CanReload = config.Navigation.AllowReload;
 
         byte[] logoBytes = BrandingHelper.ResolveLogoBytes(config.General.LogoBase64, config.General.LogoPath);
         LogoImage = ImageHelper.CreateImageSource(logoBytes);
@@ -114,6 +118,7 @@ public partial class ExamViewModel : ObservableObject, IDisposable
 
     private void UpdateClock()
     {
+        if (_disposed) return;
         ClockTime = DateTime.Now.ToString("HH:mm:ss");
     }
 
@@ -124,15 +129,18 @@ public partial class ExamViewModel : ObservableObject, IDisposable
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
         if (dispatcher != null && !dispatcher.CheckAccess())
         {
-            dispatcher.InvokeAsync(() =>
+            if (!dispatcher.HasShutdownStarted && !dispatcher.HasShutdownFinished)
             {
-                if (!_disposed)
+                dispatcher.InvokeAsync(() =>
                 {
-                    ApplyPingStatus(status);
-                }
-            });
+                    if (!_disposed)
+                    {
+                        ApplyPingStatus(status);
+                    }
+                });
+            }
         }
-        else if (!_disposed)
+        else
         {
             ApplyPingStatus(status);
         }
@@ -199,10 +207,13 @@ public partial class ExamViewModel : ObservableObject, IDisposable
         }
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanReload))]
     private void Reload()
     {
-        ReloadRequested?.Invoke();
+        if (CanReload)
+        {
+            ReloadRequested?.Invoke();
+        }
     }
 
     [RelayCommand]
@@ -259,15 +270,16 @@ public partial class ExamViewModel : ObservableObject, IDisposable
 
     protected virtual void Dispose(bool disposing)
     {
-        if (_disposed) return;
-        _disposed = true;
-
-        _pingService.PingUpdated -= OnPingUpdated;
-        if (disposing)
+        if (!_disposed)
         {
-            _clockTimer.Stop();
+            _disposed = true;
+            if (disposing)
+            {
+                _pingService.PingUpdated -= OnPingUpdated;
+                _clockTimer.Stop();
+                _pingService.Dispose();
+            }
         }
-        _pingService.Dispose();
     }
 
     ~ExamViewModel()

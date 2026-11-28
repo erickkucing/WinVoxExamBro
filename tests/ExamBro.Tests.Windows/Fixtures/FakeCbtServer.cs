@@ -20,10 +20,10 @@ public sealed class FakeCbtServer : IAsyncDisposable
     public ConcurrentQueue<string> RequestedPaths { get; } = new();
     public ConcurrentQueue<string> RecordedViolations { get; } = new();
     public ConcurrentQueue<string> RecordedAnswers { get; } = new();
+    public ConcurrentDictionary<string, bool> ReopenedSessions { get; } = new();
     public volatile string? LastUserAgent;
     public volatile bool DropConnections;
     public volatile bool Return500;
-    public volatile bool ReopenFinishedSessions;
     public int SlowDelayMs { get; set; } = 1500;
 
     private FakeCbtServer(WebApplication app, string baseUrl)
@@ -103,13 +103,22 @@ public sealed class FakeCbtServer : IAsyncDisposable
 
         app.MapGet("/exam/finished/{id}", (string id) =>
         {
-            if (instance?.ReopenFinishedSessions == true)
+            if (instance != null && instance.ReopenedSessions.ContainsKey(id))
             {
                 return Results.Redirect($"/exam/workspace/{id}");
             }
 
             return Results.Content(
-                $"<!doctype html><html><body><h1 id=\"finished-banner\">Ujian {id} Selesai</h1></body></html>",
+                $$"""
+                <!doctype html><html><body>
+                  <h1 id="finished-banner">Ujian {{id}} Selesai</h1>
+                  <script>
+                    if (window.LouisVoxExamApp && typeof window.LouisVoxExamApp.onExamFinished === 'function') {
+                      window.LouisVoxExamApp.onExamFinished();
+                    }
+                  </script>
+                </body></html>
+                """,
                 "text/html");
         });
 

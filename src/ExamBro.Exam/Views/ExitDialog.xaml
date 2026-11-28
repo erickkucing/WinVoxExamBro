@@ -3,85 +3,22 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Konfirmasi Keluar Ujian"
         Width="440"
-        Height="340"
+        MinHeight="240"
+        SizeToContent="Height"
         WindowStartupLocation="CenterScreen"
         ResizeMode="NoResize"
         WindowStyle="None"
         BorderThickness="1"
-        BorderBrush="#94A3B8"
+        BorderBrush="#CBD5E1"
         Background="#FFFFFF"
-        UseLayoutRounding="True"
-        SnapsToDevicePixels="True"
-        PreviewKeyDown="Window_PreviewKeyDown"
         Topmost="True">
-    <Window.Resources>
-        <Style x:Key="AccessiblePasswordBoxStyle" TargetType="PasswordBox">
-            <Setter Property="Height" Value="42"/>
-            <Setter Property="FontSize" Value="15"/>
-            <Setter Property="FontFamily" Value="Segoe UI"/>
-            <Setter Property="Padding" Value="12,0"/>
-            <Setter Property="Background" Value="#FFFFFF"/>
-            <Setter Property="Foreground" Value="#0F172A"/>
-            <Setter Property="CaretBrush" Value="#0F172A"/>
-            <Setter Property="SelectionBrush" Value="#BFDBFE"/>
-            <Setter Property="BorderBrush" Value="#64748B"/>
-            <Setter Property="BorderThickness" Value="1.5"/>
-            <Setter Property="VerticalContentAlignment" Value="Center"/>
-            <Setter Property="HorizontalContentAlignment" Value="Left"/>
-            <Setter Property="SnapsToDevicePixels" Value="True"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="PasswordBox">
-                        <Border x:Name="Bd"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="6"
-                                Padding="{TemplateBinding Padding}"
-                                SnapsToDevicePixels="True">
-                            <ScrollViewer x:Name="PART_ContentHost"
-                                          Margin="0"
-                                          Padding="0"
-                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                          HorizontalAlignment="Stretch"
-                                          HorizontalScrollBarVisibility="Hidden"
-                                          VerticalScrollBarVisibility="Hidden"
-                                          Focusable="False"
-                                          SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#334155"/>
-                            </Trigger>
-                            <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#1D4ED8"/>
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="Bd" Property="Background" Value="#F1F5F9"/>
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#CBD5E1"/>
-                                <Setter Property="Foreground" Value="#64748B"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style x:Key="DialogButtonStyle" TargetType="Button">
-            <Setter Property="Height" Value="40"/>
-            <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="FontSize" Value="13"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="SnapsToDevicePixels" Value="True"/>
-        </Style>
-    </Window.Resources>
-
+    <Window.Effect>
+        <DropShadowEffect BlurRadius="20" ShadowDepth="4" Opacity="0.2" Color="#000000"/>
+    </Window.Effect>
     <Grid Margin="28">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
@@ -91,91 +28,140 @@
                        FontSize="18"
                        FontWeight="Bold"
                        Foreground="#0F172A"/>
-            <TextBlock Text="Masukkan kata sandi pengawas untuk mengakhiri sesi ujian ini."
+            <TextBlock Text="Masukkan kata sandi pengawas atau admin untuk mengakhiri sesi ujian ini."
                        FontSize="13"
                        Foreground="#475569"
-                       Margin="0,4,0,0"
+                       Margin="0,6,0,0"
                        TextWrapping="Wrap"/>
         </StackPanel>
 
         <!-- Input Area -->
-        <StackPanel Grid.Row="1" Margin="0,0,0,16">
-            <TextBlock Text="Kata Sandi Pengawas:"
-                       FontSize="13"
-                       FontWeight="SemiBold"
-                       Foreground="#1E293B"
-                       Margin="0,0,0,6"/>
-            <PasswordBox x:Name="pwdExit"
-                         AutomationProperties.Name="Kata Sandi Pengawas"
-                         Style="{StaticResource AccessiblePasswordBoxStyle}"
-                         KeyDown="PwdExit_KeyDown"/>
+        <StackPanel Grid.Row="1" Margin="0,0,0,22">
+            <Label Target="{Binding ElementName=pwdExit}"
+                   Content="Kata Sandi Pengawas:"
+                   FontSize="13"
+                   FontWeight="SemiBold"
+                   Foreground="#1E293B"
+                   Padding="0"
+                   Margin="0,0,0,6"/>
+
+            <Border Style="{StaticResource PasswordFieldBorderStyle}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <PasswordBox x:Name="pwdExit"
+                                 Grid.Column="0"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 FontSize="15"
+                                 Foreground="#0F172A"
+                                 CaretBrush="#0F172A"
+                                 Padding="12,0,4,0"
+                                 VerticalAlignment="Stretch"
+                                 VerticalContentAlignment="Center"
+                                 HorizontalContentAlignment="Left"
+                                 AutomationProperties.Name="Kata sandi pengawas"/>
+
+                    <TextBox x:Name="txtExitPasswordVisible"
+                             Grid.Column="0"
+                             Visibility="Collapsed"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             FontSize="15"
+                             Foreground="#0F172A"
+                             CaretBrush="#0F172A"
+                             Padding="12,0,4,0"
+                             VerticalAlignment="Stretch"
+                             VerticalContentAlignment="Center"
+                             HorizontalContentAlignment="Left"
+                             AutomationProperties.Name="Kata sandi pengawas (terlihat)"/>
+
+                    <ToggleButton x:Name="btnTogglePassword"
+                                  Grid.Column="1"
+                                  Style="{StaticResource PasswordRevealToggleStyle}"/>
+                </Grid>
+            </Border>
+
             <TextBlock x:Name="txtError"
                        Text=""
                        FontSize="12"
-                       FontWeight="Medium"
                        Foreground="#B91C1C"
+                       TextWrapping="Wrap"
                        Margin="0,8,0,0"
+                       AutomationProperties.LiveSetting="Assertive"
                        Visibility="Collapsed"/>
+
             <TextBlock x:Name="txtLockout"
                        Text=""
                        FontSize="12"
-                       FontStyle="Italic"
-                       FontWeight="Medium"
-                       Foreground="#B45309"
+                       Foreground="#9A3412"
+                       TextWrapping="Wrap"
                        Margin="0,8,0,0"
+                       AutomationProperties.LiveSetting="Assertive"
                        Visibility="Collapsed"/>
         </StackPanel>
 
-        <!-- Spacer -->
-        <Grid Grid.Row="2"/>
-
         <!-- Action Buttons -->
-        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button x:Name="btnCancel"
                     Content="Batal"
-                    Width="104"
+                    MinWidth="104"
+                    Height="40"
                     Margin="0,0,12,0"
-                    Background="#E2E8F0"
-                    Foreground="#0F172A"
-                    Style="{StaticResource DialogButtonStyle}"
+                    IsCancel="True"
+                    Background="#F1F5F9"
+                    Foreground="#1E293B"
+                    BorderBrush="#64748B"
+                    BorderThickness="1"
+                    FontSize="13"
+                    FontWeight="SemiBold"
+                    Cursor="Hand"
+                    FocusVisualStyle="{StaticResource ExamFocusVisualStyle}"
                     Click="BtnCancel_Click">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="btnBorder"
                                 Background="{TemplateBinding Background}"
-                                BorderBrush="#94A3B8"
-                                BorderThickness="1.5"
-                                CornerRadius="6">
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6"
+                                Padding="16,0">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="btnBorder" Property="Background" Value="#CBD5E1"/>
+                                <Setter TargetName="btnBorder" Property="Background" Value="#E2E8F0"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="btnBorder" Property="Background" Value="#94A3B8"/>
-                            </Trigger>
-                            <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="btnBorder" Property="BorderBrush" Value="#1D4ED8"/>
+                                <Setter TargetName="btnBorder" Property="Background" Value="#CBD5E1"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Button.Template>
             </Button>
+
             <Button x:Name="btnConfirmExit"
                     Content="Keluar Ujian"
-                    Width="124"
+                    MinWidth="128"
+                    Height="40"
+                    IsDefault="True"
                     Background="#DC2626"
                     Foreground="#FFFFFF"
-                    Style="{StaticResource DialogButtonStyle}"
+                    BorderThickness="0"
+                    FontSize="13"
+                    FontWeight="SemiBold"
+                    Cursor="Hand"
+                    FocusVisualStyle="{StaticResource ExamFocusVisualStyle}"
                     Click="BtnConfirmExit_Click">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="btnBorder"
                                 Background="{TemplateBinding Background}"
-                                BorderBrush="Transparent"
-                                BorderThickness="2"
-                                CornerRadius="6">
+                                CornerRadius="6"
+                                Padding="16,0">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -185,12 +171,10 @@
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="btnBorder" Property="Background" Value="#991B1B"/>
                             </Trigger>
-                            <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="btnBorder" Property="BorderBrush" Value="#1E293B"/>
-                            </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="btnBorder" Property="Background" Value="#94A3B8"/>
-                                <Setter TargetName="btnBorder" Property="Opacity" Value="0.7"/>
+                                <Setter TargetName="btnBorder" Property="Background" Value="#F1F5F9"/>
+                                <Setter Property="Foreground" Value="#64748B"/>
+                                <Setter Property="Cursor" Value="No"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>

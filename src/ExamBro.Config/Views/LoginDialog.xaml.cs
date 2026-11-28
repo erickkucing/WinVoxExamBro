@@ -1,8 +1,8 @@
 using System.Windows;
-using System.Windows.Input;
 using System.Windows.Threading;
 using ExamBro.Core.Models;
 using ExamBro.Core.Security;
+using ExamBro.WpfHelpers;
 using Serilog;
 
 namespace ExamBro.Config.Views;
@@ -13,8 +13,8 @@ namespace ExamBro.Config.Views;
 /// </summary>
 public partial class LoginDialog : Window
 {
-    private int _failedAttempts;
-    private int _remainingLockoutSeconds;
+    private readonly PasswordAttemptTracker _attemptTracker = new();
+    private readonly PasswordRevealBinding _passwordReveal;
     private readonly DispatcherTimer _lockoutTimer;
 
     public ExamConfig Config { get; }
@@ -23,6 +23,18 @@ public partial class LoginDialog : Window
     {
         InitializeComponent();
         Config = config;
+        _passwordReveal = PasswordRevealBinding.Bind(
+            TxtPassword,
+            TxtPasswordVisible,
+            BtnTogglePassword,
+            onInputChanged: () => TxtError.Visibility = Visibility.Collapsed,
+            onEnterPressed: () =>
+            {
+                if (BtnLogin.IsEnabled)
+                {
+                    PerformLogin();
+                }
+            });
 
         int maxAttempts = Config.Admin.MaxPasswordAttempts > 0 ? Config.Admin.MaxPasswordAttempts : 5;
         TxtAttemptsInfo.Text = $"Batas percobaan: {maxAttempts} kali";
@@ -33,20 +45,16 @@ public partial class LoginDialog : Window
         };
         _lockoutTimer.Tick += LockoutTimer_Tick;
 
-        Loaded += (_, _) => TxtPassword.Focus();
-    }
-
-    private void TxtPassword_PasswordChanged(object sender, RoutedEventArgs e)
-    {
-        TxtError.Visibility = Visibility.Collapsed;
-    }
-
-    private void TxtPassword_KeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter && BtnLogin.IsEnabled)
+        Loaded += (_, _) =>
         {
-            PerformLogin();
-        }
+            Activate();
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, () => _passwordReveal.FocusActive());
+        };
+        Closing += (_, _) =>
+        {
+            _lockoutTimer.Stop();
+            _passwordReveal.Reset();
+        };
     }
 
     private void BtnLogin_Click(object sender, RoutedEventArgs e)
@@ -56,12 +64,18 @@ public partial class LoginDialog : Window
 
     private void PerformLogin()
     {
-        string enteredPassword = TxtPassword.Password;
+        if (_attemptTracker.IsLockedOut(out int activeRemaining))
+        {
+            ApplyLockoutUi(activeRemaining);
+            return;
+        }
+
+        string enteredPassword = _passwordReveal.GetPassword();
         if (string.IsNullOrEmpty(enteredPassword))
         {
             TxtError.Text = "Masukkan password administrator.";
             TxtError.Visibility = Visibility.Visible;
-            TxtPassword.Focus();
+            _passwordReveal.FocusActive();
             return;
         }
 
@@ -73,74 +87,71 @@ public partial class LoginDialog : Window
         if (isValid)
         {
             Log.Information("Otentikasi administrator berhasil");
-            _failedAttempts = 0;
+            _attemptTracker.Reset();
             DialogResult = true;
             Close();
             return;
         }
 
-        _failedAttempts++;
         int maxAttempts = Config.Admin.MaxPasswordAttempts > 0 ? Config.Admin.MaxPasswordAttempts : 5;
-        int remainingAttempts = maxAttempts - _failedAttempts;
+        int remainingAttempts = _attemptTracker.RegisterFailedAttempt(
+            Config.Admin.MaxPasswordAttempts,
+            Config.Admin.PasswordLockoutSeconds,
+            out bool triggeredLockout,
+            out int lockoutSeconds);
 
         Log.Warning("Percobaan login administrator gagal. Percobaan {FailedAttempts}/{MaxAttempts}",
-            _failedAttempts, maxAttempts);
+            _attemptTracker.FailedAttempts, maxAttempts);
 
-        if (_failedAttempts >= maxAttempts)
+        if (triggeredLockout)
         {
-            TriggerLockout();
+            ApplyLockoutUi(lockoutSeconds);
         }
         else
         {
             TxtError.Text = $"Password salah! Sisa percobaan: {remainingAttempts}.";
             TxtError.Visibility = Visibility.Visible;
-            TxtAttemptsInfo.Text = $"Percobaan gagal: {_failedAttempts} / {maxAttempts}";
-            TxtPassword.SelectAll();
-            TxtPassword.Focus();
+            TxtAttemptsInfo.Text = $"Percobaan gagal: {_attemptTracker.FailedAttempts} / {maxAttempts}";
+            _passwordReveal.SelectAllAndFocus();
         }
     }
 
-    private void TriggerLockout()
+    private void ApplyLockoutUi(int remainingSeconds)
     {
-        int lockoutSeconds = Config.Admin.PasswordLockoutSeconds > 0 ? Config.Admin.PasswordLockoutSeconds : 30;
-        _remainingLockoutSeconds = lockoutSeconds;
-
-        TxtPassword.IsEnabled = false;
+        int clamped = Math.Max(1, remainingSeconds);
+        _passwordReveal.SetEnabled(false);
         BtnLogin.IsEnabled = false;
         TxtError.Visibility = Visibility.Collapsed;
-        TxtLockoutMessage.Text = $"Terlalu banyak percobaan gagal. Akses dikunci selama {_remainingLockoutSeconds} detik.";
+        TxtLockoutMessage.Text = $"Terlalu banyak percobaan gagal. Akses dikunci selama {clamped} detik.";
         TxtLockoutMessage.Visibility = Visibility.Visible;
 
+        _lockoutTimer.Stop();
         _lockoutTimer.Start();
-        Log.Warning("Lockout login administrator diaktifkan selama {Seconds} detik", lockoutSeconds);
+        Log.Warning("Lockout login administrator diaktifkan selama {Seconds} detik", clamped);
     }
 
     private void LockoutTimer_Tick(object? sender, EventArgs e)
     {
-        _remainingLockoutSeconds--;
-
-        if (_remainingLockoutSeconds <= 0)
+        if (!_attemptTracker.IsLockedOut(out int remaining))
         {
             _lockoutTimer.Stop();
-            _failedAttempts = 0;
-            TxtPassword.IsEnabled = true;
+            _passwordReveal.SetEnabled(true);
             BtnLogin.IsEnabled = true;
             TxtLockoutMessage.Visibility = Visibility.Collapsed;
 
             int maxAttempts = Config.Admin.MaxPasswordAttempts > 0 ? Config.Admin.MaxPasswordAttempts : 5;
             TxtAttemptsInfo.Text = $"Batas percobaan: {maxAttempts} kali";
-            TxtPassword.Clear();
-            TxtPassword.Focus();
+            _passwordReveal.Clear();
+            _passwordReveal.FocusActive();
         }
         else
         {
-            TxtLockoutMessage.Text = $"Akun terkunci sementara. Coba lagi dalam {_remainingLockoutSeconds} detik.";
+            TxtLockoutMessage.Text = $"Akun terkunci sementara. Coba lagi dalam {remaining} detik.";
         }
     }
 
     private void BtnCancel_Click(object sender, RoutedEventArgs e)
     {
-        _lockoutTimer.Stop();
         DialogResult = false;
         Close();
     }

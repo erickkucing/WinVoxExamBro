@@ -15,11 +15,11 @@ public class NetworkPingService : IDisposable
     private readonly object _lifecycleLock = new();
     private readonly object _targetLock = new();
     private CancellationTokenSource? _cts;
-    private string _targetHost = "127.0.0.1";
-    private int _targetPort = 80;
     private volatile bool _isRunning;
     private volatile bool _disposed;
     private int _isPinging;
+    private string _targetHost = "127.0.0.1";
+    private int _targetPort = 80;
 
     public string TargetHost
     {
@@ -54,11 +54,10 @@ public class NetworkPingService : IDisposable
         {
             if (Uri.TryCreate(url, UriKind.Absolute, out Uri? uri))
             {
-                string host = uri.Host;
                 int port = uri.Port > 0 ? uri.Port : (uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? 443 : 80);
                 lock (_targetLock)
                 {
-                    _targetHost = host;
+                    _targetHost = uri.Host;
                     _targetPort = port;
                 }
             }

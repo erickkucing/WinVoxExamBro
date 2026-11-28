@@ -19,9 +19,9 @@ public class ClipboardService : IDisposable
     private readonly bool _allowClipboard;
     private bool _isListening;
     private bool _isClearing;
-    private volatile bool _disposed;
     private static uint _lastSelfClearedSeq;
     private int _asyncClearRunning;
+    private volatile bool _disposed;
 
     public event Action? ClipboardViolationDetected;
 
@@ -74,6 +74,9 @@ public class ClipboardService : IDisposable
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    private static extern int CountClipboardFormats();
 
     [DllImport("user32.dll")]
     private static extern uint GetClipboardSequenceNumber();
@@ -162,16 +165,16 @@ public class ClipboardService : IDisposable
 
     /// <summary>
     /// Window procedure hook to capture WM_CLIPBOARDUPDATE.
-    /// Ignores self-triggered sequence updates and avoids blocking the UI message pump.
+    /// Avoids blocking the UI message pump if clipboard is momentarily locked.
     /// </summary>
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         if (msg == WM_CLIPBOARDUPDATE && !_allowClipboard && !_disposed)
         {
             uint currentSeq = GetClipboardSequenceNumber();
-            if (_isClearing || (currentSeq != 0 && currentSeq == Volatile.Read(ref _lastSelfClearedSeq)))
+            uint lastSelfSeq = Volatile.Read(ref _lastSelfClearedSeq);
+            if (_isClearing || (currentSeq != 0 && currentSeq == lastSelfSeq) || CountClipboardFormats() == 0)
             {
-                handled = true;
                 return IntPtr.Zero;
             }
 
@@ -185,7 +188,7 @@ public class ClipboardService : IDisposable
                     {
                         try
                         {
-                            if (!_disposed) ClearClipboard();
+                            ClearClipboard();
                         }
                         finally
                         {

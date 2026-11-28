@@ -1,7 +1,9 @@
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Threading;
 using ExamBro.Core.Security;
+using ExamBro.WpfHelpers;
 
 namespace ExamBro.Config.Views;
 
@@ -13,6 +15,9 @@ public partial class ChangePasswordDialog : Window
     private readonly string _existingHash;
     private readonly string _existingSalt;
     private readonly bool _hasExistingPassword;
+    private readonly PasswordRevealBinding _currentReveal;
+    private readonly PasswordRevealBinding _newReveal;
+    private readonly PasswordRevealBinding _confirmReveal;
 
     public (string Hash, string Salt) Result { get; private set; }
 
@@ -25,25 +30,55 @@ public partial class ChangePasswordDialog : Window
         _existingSalt = existingSalt;
         _hasExistingPassword = !string.IsNullOrEmpty(existingHash) && !string.IsNullOrEmpty(existingSalt);
 
+        _currentReveal = PasswordRevealBinding.Bind(
+            TxtCurrentPassword,
+            TxtCurrentPasswordVisible,
+            BtnToggleCurrentPassword,
+            onInputChanged: HideError,
+            onEnterPressed: SavePassword);
+
+        _newReveal = PasswordRevealBinding.Bind(
+            TxtNewPassword,
+            TxtNewPasswordVisible,
+            BtnToggleNewPassword,
+            onInputChanged: OnNewPasswordChanged,
+            onEnterPressed: SavePassword);
+
+        _confirmReveal = PasswordRevealBinding.Bind(
+            TxtConfirmPassword,
+            TxtConfirmPasswordVisible,
+            BtnToggleConfirmPassword,
+            onInputChanged: HideError,
+            onEnterPressed: SavePassword);
+
         if (!_hasExistingPassword)
         {
             CurrentPasswordPanel.Visibility = Visibility.Collapsed;
-            Height = 370;
         }
 
         Loaded += (_, _) =>
         {
-            if (_hasExistingPassword)
-                TxtCurrentPassword.Focus();
-            else
-                TxtNewPassword.Focus();
+            Activate();
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+            {
+                if (_hasExistingPassword)
+                    _currentReveal.FocusActive();
+                else
+                    _newReveal.FocusActive();
+            });
+        };
+        Closing += (_, _) =>
+        {
+            _currentReveal.Reset();
+            _newReveal.Reset();
+            _confirmReveal.Reset();
         };
     }
 
-    private void TxtNewPassword_PasswordChanged(object sender, RoutedEventArgs e)
+    private void OnNewPasswordChanged()
     {
-        TxtError.Visibility = Visibility.Collapsed;
-        int score = CalculatePasswordStrength(TxtNewPassword.Password);
+        HideError();
+        int score = CalculatePasswordStrength(_newReveal.GetPassword());
         ProgressStrength.Value = score;
 
         switch (score)
@@ -51,24 +86,24 @@ public partial class ChangePasswordDialog : Window
             case 0:
             case 1:
                 TxtStrengthLabel.Text = "Kekuatan: Lemah";
-                TxtStrengthLabel.Foreground = new SolidColorBrush(Color.FromRgb(211, 47, 47)); // Red
-                ProgressStrength.Foreground = new SolidColorBrush(Color.FromRgb(211, 47, 47));
+                TxtStrengthLabel.Foreground = new SolidColorBrush(Color.FromRgb(185, 28, 28));
+                ProgressStrength.Foreground = new SolidColorBrush(Color.FromRgb(220, 38, 38));
                 break;
             case 2:
                 TxtStrengthLabel.Text = "Kekuatan: Sedang";
-                TxtStrengthLabel.Foreground = new SolidColorBrush(Color.FromRgb(245, 127, 23)); // Orange
-                ProgressStrength.Foreground = new SolidColorBrush(Color.FromRgb(245, 127, 23));
+                TxtStrengthLabel.Foreground = new SolidColorBrush(Color.FromRgb(154, 52, 18));
+                ProgressStrength.Foreground = new SolidColorBrush(Color.FromRgb(234, 88, 12));
                 break;
             case 3:
             case 4:
                 TxtStrengthLabel.Text = "Kekuatan: Kuat";
-                TxtStrengthLabel.Foreground = new SolidColorBrush(Color.FromRgb(56, 142, 60)); // Green
-                ProgressStrength.Foreground = new SolidColorBrush(Color.FromRgb(56, 142, 60));
+                TxtStrengthLabel.Foreground = new SolidColorBrush(Color.FromRgb(21, 128, 61));
+                ProgressStrength.Foreground = new SolidColorBrush(Color.FromRgb(22, 163, 74));
                 break;
         }
     }
 
-    private int CalculatePasswordStrength(string password)
+    private static int CalculatePasswordStrength(string password)
     {
         if (string.IsNullOrEmpty(password))
             return 0;
@@ -84,37 +119,47 @@ public partial class ChangePasswordDialog : Window
 
     private void BtnSave_Click(object sender, RoutedEventArgs e)
     {
+        SavePassword();
+    }
+
+    private void SavePassword()
+    {
         if (_hasExistingPassword)
         {
-            string currentPass = TxtCurrentPassword.Password;
+            string currentPass = _currentReveal.GetPassword();
             if (string.IsNullOrEmpty(currentPass) ||
                 !PasswordHasher.VerifyPassword(currentPass, _existingHash, _existingSalt))
             {
                 ShowError("Password saat ini salah.");
-                TxtCurrentPassword.Focus();
+                _currentReveal.FocusActive();
                 return;
             }
         }
 
-        string newPass = TxtNewPassword.Password;
+        string newPass = _newReveal.GetPassword();
         if (string.IsNullOrEmpty(newPass) || newPass.Length < 6)
         {
             ShowError("Password baru harus minimal 6 karakter.");
-            TxtNewPassword.Focus();
+            _newReveal.FocusActive();
             return;
         }
 
-        string confirmPass = TxtConfirmPassword.Password;
+        string confirmPass = _confirmReveal.GetPassword();
         if (newPass != confirmPass)
         {
             ShowError("Konfirmasi password baru tidak cocok.");
-            TxtConfirmPassword.Focus();
+            _confirmReveal.FocusActive();
             return;
         }
 
         Result = PasswordHasher.HashPassword(newPass);
         DialogResult = true;
         Close();
+    }
+
+    private void HideError()
+    {
+        TxtError.Visibility = Visibility.Collapsed;
     }
 
     private void ShowError(string message)

@@ -19,7 +19,97 @@
         <SolidColorBrush x:Key="ErrorBrush" Color="#D32F2F"/>
         <SolidColorBrush x:Key="SuccessBrush" Color="#388E3C"/>
         <SolidColorBrush x:Key="WarningBrush" Color="#F57F17"/>
-        <SolidColorBrush x:Key="BorderBrush" Color="#E0E0E0"/>
+        <SolidColorBrush x:Key="BorderBrush" Color="#CBD5E1"/>
+
+        <Style x:Key="ConfigFocusVisualStyle">
+            <Setter Property="Control.Template">
+                <Setter.Value>
+                    <ControlTemplate>
+                        <Rectangle Margin="-3"
+                                   RadiusX="6"
+                                   RadiusY="6"
+                                   Stroke="#1565C0"
+                                   StrokeThickness="2"
+                                   SnapsToDevicePixels="True"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ConfigPasswordFieldBorderStyle" TargetType="Border">
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#64748B"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="BorderBrush" Value="#334155"/>
+                </Trigger>
+                <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                    <Setter Property="BorderBrush" Value="#1565C0"/>
+                    <Setter Property="BorderThickness" Value="2"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="#F1F5F9"/>
+                    <Setter Property="BorderBrush" Value="#94A3B8"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ConfigPasswordRevealToggleStyle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="36"/>
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="Margin" Value="0,1,2,1"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#334155"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="True"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource ConfigFocusVisualStyle}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="toggleBg" Background="{TemplateBinding Background}" CornerRadius="4">
+                            <Canvas Width="16" Height="16" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <Path Stroke="{TemplateBinding Foreground}"
+                                      StrokeThickness="1.6"
+                                      StrokeLineJoin="Round"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      Data="M 1.5,8 C 3.3,4.4 5.7,3 8,3 C 10.3,3 12.7,4.4 14.5,8 C 12.7,11.6 10.3,13 8,13 C 5.7,13 3.3,11.6 1.5,8 Z"/>
+                                <Ellipse Canvas.Left="5.75" Canvas.Top="5.75" Width="4.5" Height="4.5"
+                                         Stroke="{TemplateBinding Foreground}" StrokeThickness="1.6"/>
+                                <Path x:Name="SlashPath"
+                                      Visibility="Collapsed"
+                                      Stroke="{TemplateBinding Foreground}"
+                                      StrokeThickness="1.8"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      Data="M 2.5,13.5 L 13.5,2.5"/>
+                            </Canvas>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="toggleBg" Property="Background" Value="#F1F5F9"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="toggleBg" Property="Background" Value="#E2E8F0"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter Property="Foreground" Value="#1565C0"/>
+                                <Setter TargetName="SlashPath" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#94A3B8"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         
         <Style TargetType="Button" x:Key="PrimaryButton">
             <Setter Property="Background" Value="{StaticResource PrimaryBrush}"/>
@@ -61,24 +151,22 @@
         
         <Style TargetType="TextBox">
             <Setter Property="Padding" Value="8,0"/>
-            <Setter Property="MinHeight" Value="32"/>
+            <Setter Property="MinHeight" Value="30"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="Margin" Value="0,2,0,8"/>
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="FontSize" Value="13"/>
-            <Setter Property="VerticalContentAlignment" Value="Center"/>
-            <Setter Property="SnapsToDevicePixels" Value="True"/>
         </Style>
 
         <Style TargetType="PasswordBox">
             <Setter Property="Padding" Value="8,0"/>
-            <Setter Property="MinHeight" Value="32"/>
+            <Setter Property="MinHeight" Value="30"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="Margin" Value="0,2,0,8"/>
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="FontSize" Value="13"/>
-            <Setter Property="VerticalContentAlignment" Value="Center"/>
-            <Setter Property="SnapsToDevicePixels" Value="True"/>
         </Style>
         
         <Style TargetType="CheckBox">

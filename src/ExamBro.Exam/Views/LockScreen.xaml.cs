@@ -1,25 +1,25 @@
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using System.Windows.Threading;
 using ExamBro.Core.Models;
 using ExamBro.Core.Security;
+using ExamBro.WpfHelpers;
 using Serilog;
 
 namespace ExamBro.Exam.Views;
 
 /// <summary>
 /// Interaction logic for LockScreen.xaml.
-/// Displays an unbypassable full-screen lockout window requiring proctor authorization
-/// to resume the exam session, with attempt limiting and timed lockouts.
+/// Displays a full-screen lockout overlay requiring proctor authorization
+/// to resume the exam session, with wall-clock attempt tracking and timed lockouts.
 /// </summary>
 public partial class LockScreen : UserControl
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<LockScreen>();
 
     private ExamConfig? _config;
-    private int _failedAttempts;
-    private int _lockoutSecondsRemaining;
+    private readonly PasswordAttemptTracker _attemptTracker = new();
+    private readonly PasswordRevealBinding _passwordReveal;
     private readonly DispatcherTimer _lockoutTimer;
 
     public event Action? Unlocked;
@@ -27,12 +27,19 @@ public partial class LockScreen : UserControl
     public LockScreen()
     {
         InitializeComponent();
+        _passwordReveal = PasswordRevealBinding.Bind(
+            pwdProctor,
+            txtProctorPasswordVisible,
+            btnTogglePassword,
+            onInputChanged: HideError,
+            onEnterPressed: AttemptUnlock);
 
         _lockoutTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromSeconds(1)
         };
         _lockoutTimer.Tick += OnLockoutTick;
+        Unloaded += (_, _) => _lockoutTimer.Stop();
     }
 
     public void Initialize(ExamConfig config)
@@ -45,12 +52,19 @@ public partial class LockScreen : UserControl
     public void ShowLock(string reason)
     {
         txtReason.Text = reason;
-        txtError.Visibility = Visibility.Collapsed;
-        txtError.Text = string.Empty;
-        pwdProctor.Password = string.Empty;
+        HideError();
+        _passwordReveal.Reset();
 
         Visibility = Visibility.Visible;
-        pwdProctor.Focus();
+
+        if (_attemptTracker.IsLockedOut(out int activeRemaining))
+        {
+            ApplyLockoutUi(activeRemaining);
+        }
+        else
+        {
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, () => _passwordReveal.FocusActive());
+        }
     }
 
     /// <summary>
@@ -59,20 +73,16 @@ public partial class LockScreen : UserControl
     public void RemoteUnlock()
     {
         Log.Information("Remote unlock received from CBT web server");
-        _failedAttempts = 0;
-        _lockoutSecondsRemaining = 0;
+        _attemptTracker.Reset();
         _lockoutTimer.Stop();
-        pwdProctor.Password = string.Empty;
+        btnUnlock.IsEnabled = true;
+        _passwordReveal.SetEnabled(true);
+        _passwordReveal.Reset();
+        HideError();
+        txtLockoutTimer.Visibility = Visibility.Collapsed;
+        txtLockoutTimer.Text = string.Empty;
         Visibility = Visibility.Collapsed;
         Unlocked?.Invoke();
-    }
-
-    private void PwdProctor_KeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter)
-        {
-            AttemptUnlock();
-        }
     }
 
     private void BtnUnlock_Click(object sender, RoutedEventArgs e)
@@ -82,112 +92,101 @@ public partial class LockScreen : UserControl
 
     private void AttemptUnlock()
     {
-        if (_config == null || _lockoutSecondsRemaining > 0)
+        if (_config == null)
         {
             return;
         }
 
-        string input = pwdProctor.Password;
+        if (_attemptTracker.IsLockedOut(out int activeRemaining))
+        {
+            ApplyLockoutUi(activeRemaining);
+            return;
+        }
+
+        string input = _passwordReveal.GetPassword();
         if (string.IsNullOrEmpty(input))
         {
             ShowError("Masukkan kata sandi pengawas.");
+            _passwordReveal.FocusActive();
             return;
         }
 
-        bool isValid = false;
-
-        // 1. Verify against Proctor password
-        if (!string.IsNullOrEmpty(_config.Admin.ProctorPasswordHash) &&
-            !string.IsNullOrEmpty(_config.Admin.ProctorPasswordSalt))
-        {
-            isValid = PasswordHasher.VerifyPassword(
-                input,
-                _config.Admin.ProctorPasswordHash,
-                _config.Admin.ProctorPasswordSalt);
-        }
-
-        // 2. Also check Admin password as an override
-        if (!isValid &&
-            !string.IsNullOrEmpty(_config.Admin.AdminPasswordHash) &&
-            !string.IsNullOrEmpty(_config.Admin.AdminPasswordSalt))
-        {
-            isValid = PasswordHasher.VerifyPassword(
-                input,
-                _config.Admin.AdminPasswordHash,
-                _config.Admin.AdminPasswordSalt);
-        }
-
-        // 3. Fallback for unconfigured dev/test environments
-        if (!isValid && string.IsNullOrEmpty(_config.Admin.ProctorPasswordHash) &&
-            string.IsNullOrEmpty(_config.Admin.AdminPasswordHash))
-        {
-            // If neither is set, allow default "admin" or empty
-            isValid = input == "admin";
-        }
+        bool isValid = PasswordVerifier.VerifyProctorOrAdmin(_config, input);
 
         if (isValid)
         {
             Log.Information("Proctor successfully unlocked kiosk session");
-            _failedAttempts = 0;
-            pwdProctor.Password = string.Empty;
+            _attemptTracker.Reset();
+            _lockoutTimer.Stop();
+            _passwordReveal.Reset();
+            HideError();
             Visibility = Visibility.Collapsed;
             Unlocked?.Invoke();
         }
         else
         {
-            _failedAttempts++;
             int maxAttempts = _config.Admin.MaxPasswordAttempts > 0 ? _config.Admin.MaxPasswordAttempts : 5;
-            int remaining = maxAttempts - _failedAttempts;
+            int remaining = _attemptTracker.RegisterFailedAttempt(
+                _config.Admin.MaxPasswordAttempts,
+                _config.Admin.PasswordLockoutSeconds,
+                out bool triggeredLockout,
+                out int lockoutSeconds);
 
-            Log.Warning("Proctor unlock failed. Attempt {Attempt}/{Max}", _failedAttempts, maxAttempts);
+            Log.Warning("Proctor unlock failed. Attempt {Attempt}/{Max}", _attemptTracker.FailedAttempts, maxAttempts);
 
-            if (remaining <= 0)
+            if (triggeredLockout)
             {
-                TriggerLockout();
+                ApplyLockoutUi(lockoutSeconds);
             }
             else
             {
                 ShowError($"Kata sandi salah! Sisa percobaan: {remaining}");
-                pwdProctor.Password = string.Empty;
-                pwdProctor.Focus();
+                _passwordReveal.Clear();
+                _passwordReveal.FocusActive();
             }
         }
     }
 
-    private void TriggerLockout()
+    private void ApplyLockoutUi(int remainingSeconds)
     {
-        int lockoutSeconds = _config?.Admin.PasswordLockoutSeconds > 0 ? _config.Admin.PasswordLockoutSeconds : 30;
-        _lockoutSecondsRemaining = lockoutSeconds;
+        int clamped = Math.Max(1, remainingSeconds);
 
         btnUnlock.IsEnabled = false;
-        pwdProctor.IsEnabled = false;
-        pwdProctor.Password = string.Empty;
+        _passwordReveal.SetEnabled(false);
 
-        txtError.Visibility = Visibility.Collapsed;
+        HideError();
         txtLockoutTimer.Visibility = Visibility.Visible;
-        txtLockoutTimer.Text = $"Terlalu banyak percobaan gagal. Silakan tunggu {_lockoutSecondsRemaining} detik.";
+        txtLockoutTimer.Text = $"Terlalu banyak percobaan gagal. Silakan tunggu {clamped} detik.";
 
+        _lockoutTimer.Stop();
         _lockoutTimer.Start();
     }
 
     private void OnLockoutTick(object? sender, EventArgs e)
     {
-        _lockoutSecondsRemaining--;
-        if (_lockoutSecondsRemaining <= 0)
+        if (!_attemptTracker.IsLockedOut(out int remaining))
         {
             _lockoutTimer.Stop();
-            _failedAttempts = 0;
 
             btnUnlock.IsEnabled = true;
-            pwdProctor.IsEnabled = true;
+            _passwordReveal.SetEnabled(true);
             txtLockoutTimer.Visibility = Visibility.Collapsed;
             txtLockoutTimer.Text = string.Empty;
 
-            pwdProctor.Focus();
+            _passwordReveal.FocusActive();
         }
         else
         {
-            txtLockoutTimer.Text = $"Terlalu banyak percobaan gagal. Silakan tunggu {_lockoutSecondsRemaining} detik.";
+            txtLockoutTimer.Text = $"Terlalu banyak percobaan gagal. Silakan tunggu {remaining} detik.";
+        }
+    }
+
+    private void HideError()
+    {
+        if (txtError.Visibility == Visibility.Visible)
+        {
+            txtError.Visibility = Visibility.Collapsed;
+            txtError.Text = string.Empty;
         }
     }
 

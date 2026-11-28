@@ -3,9 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="#0A0E14"
              HorizontalAlignment="Stretch"
-             VerticalAlignment="Stretch"
-             UseLayoutRounding="True"
-             SnapsToDevicePixels="True">
+             VerticalAlignment="Stretch">
     <Grid>
         <Border Width="520"
                 Background="#161B22"
@@ -18,14 +16,14 @@
             <Border.Effect>
                 <DropShadowEffect BlurRadius="40" ShadowDepth="0" Color="#D32F2F" Opacity="0.4"/>
             </Border.Effect>
-            <StackPanel HorizontalAlignment="Stretch">
+            <StackPanel HorizontalAlignment="Center">
                 <Border Width="72" Height="72" CornerRadius="36" Background="#2C0B0E" Margin="0,0,0,18" HorizontalAlignment="Center">
                     <TextBlock Text="🔒" FontSize="38" Foreground="#FF5252" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Border>
                 <TextBlock Text="UJIAN TERKUNCI"
                            FontSize="24"
                            FontWeight="Bold"
-                           Foreground="#FF5252"
+                           Foreground="#FCA5A5"
                            HorizontalAlignment="Center"
                            Margin="0,0,0,8"/>
                 <TextBlock x:Name="txtReason"
@@ -36,100 +34,92 @@
                            Foreground="#CBD5E1"
                            Margin="0,0,0,24"/>
 
-                <TextBlock Text="Kata Sandi Pengawas (Proctor):"
-                           FontSize="13"
-                           FontWeight="SemiBold"
-                           Foreground="#CBD5E1"
-                           Margin="0,0,0,6"/>
-                <PasswordBox x:Name="pwdProctor"
-                             AutomationProperties.Name="Kata Sandi Pengawas LockScreen"
-                             Height="44"
-                             FontSize="16"
-                             FontFamily="Segoe UI"
-                             Padding="14,0"
-                             VerticalContentAlignment="Center"
-                             HorizontalContentAlignment="Left"
-                             Background="#0D1117"
-                             Foreground="#FFFFFF"
-                             CaretBrush="#F8FAFC"
-                             SelectionBrush="#1D4ED8"
-                             BorderBrush="#6E7681"
-                             BorderThickness="1.5"
-                             KeyDown="PwdProctor_KeyDown">
-                    <PasswordBox.Template>
-                        <ControlTemplate TargetType="PasswordBox">
-                            <Border x:Name="Bd"
-                                    Background="{TemplateBinding Background}"
-                                    BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="{TemplateBinding BorderThickness}"
-                                    CornerRadius="8"
-                                    Padding="{TemplateBinding Padding}"
-                                    SnapsToDevicePixels="True">
-                                <ScrollViewer x:Name="PART_ContentHost"
-                                              Margin="0"
-                                              Padding="0"
-                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
-                                              HorizontalAlignment="Stretch"
-                                              HorizontalScrollBarVisibility="Hidden"
-                                              VerticalScrollBarVisibility="Hidden"
-                                              Focusable="False"
-                                              SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
-                            </Border>
-                            <ControlTemplate.Triggers>
-                                <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="Bd" Property="BorderBrush" Value="#94A3B8"/>
-                                </Trigger>
-                                <Trigger Property="IsKeyboardFocused" Value="True">
-                                    <Setter TargetName="Bd" Property="BorderBrush" Value="#60A5FA"/>
-                                </Trigger>
-                                <Trigger Property="IsEnabled" Value="False">
-                                    <Setter TargetName="Bd" Property="Opacity" Value="0.6"/>
-                                </Trigger>
-                            </ControlTemplate.Triggers>
-                        </ControlTemplate>
-                    </PasswordBox.Template>
-                </PasswordBox>
+                <Label Target="{Binding ElementName=pwdProctor}"
+                       Content="Kata Sandi Pengawas (Proctor):"
+                       FontSize="13"
+                       FontWeight="SemiBold"
+                       Foreground="#E2E8F0"
+                       Padding="0"
+                       Margin="0,0,0,6"/>
+
+                <Border Style="{StaticResource DarkPasswordFieldBorderStyle}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <PasswordBox x:Name="pwdProctor"
+                                     Grid.Column="0"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     FontSize="16"
+                                     Foreground="#FFFFFF"
+                                     CaretBrush="#FFFFFF"
+                                     Padding="12,0,4,0"
+                                     VerticalAlignment="Stretch"
+                                     VerticalContentAlignment="Center"
+                                     HorizontalContentAlignment="Left"
+                                     AutomationProperties.Name="Kata sandi pengawas"/>
+
+                        <TextBox x:Name="txtProctorPasswordVisible"
+                                 Grid.Column="0"
+                                 Visibility="Collapsed"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 FontSize="16"
+                                 Foreground="#FFFFFF"
+                                 CaretBrush="#FFFFFF"
+                                 Padding="12,0,4,0"
+                                 VerticalAlignment="Stretch"
+                                 VerticalContentAlignment="Center"
+                                 HorizontalContentAlignment="Left"
+                                 AutomationProperties.Name="Kata sandi pengawas (terlihat)"/>
+
+                        <ToggleButton x:Name="btnTogglePassword"
+                                      Grid.Column="1"
+                                      Style="{StaticResource DarkPasswordRevealToggleStyle}"/>
+                    </Grid>
+                </Border>
 
                 <TextBlock x:Name="txtError"
                            Text=""
                            FontSize="13"
                            Foreground="#FCA5A5"
                            TextAlignment="Center"
-                           Margin="0,10,0,10"
+                           TextWrapping="Wrap"
+                           Margin="0,10,0,4"
+                           AutomationProperties.LiveSetting="Assertive"
                            Visibility="Collapsed"/>
 
                 <Button x:Name="btnUnlock"
                         Content="Buka Kunci Ujian"
-                        Height="44"
-                        Margin="0,14,0,0"
-                        Background="#B71C1C"
+                        Height="42"
+                        Margin="0,16,0,0"
+                        Background="#DC2626"
                         Foreground="#FFFFFF"
                         FontSize="15"
                         FontWeight="SemiBold"
                         BorderThickness="0"
                         Cursor="Hand"
+                        FocusVisualStyle="{StaticResource ExamFocusVisualStyle}"
                         Click="BtnUnlock_Click">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
-                            <Border x:Name="btnBorder"
-                                    Background="{TemplateBinding Background}"
-                                    BorderBrush="Transparent"
-                                    BorderThickness="2"
-                                    CornerRadius="8">
+                            <Border x:Name="btnBorder" Background="{TemplateBinding Background}" CornerRadius="6">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="btnBorder" Property="Background" Value="#DC2626"/>
+                                    <Setter TargetName="btnBorder" Property="Background" Value="#B91C1C"/>
                                 </Trigger>
                                 <Trigger Property="IsPressed" Value="True">
                                     <Setter TargetName="btnBorder" Property="Background" Value="#991B1B"/>
                                 </Trigger>
-                                <Trigger Property="IsKeyboardFocused" Value="True">
-                                    <Setter TargetName="btnBorder" Property="BorderBrush" Value="#FCA5A5"/>
-                                </Trigger>
                                 <Trigger Property="IsEnabled" Value="False">
-                                    <Setter TargetName="btnBorder" Property="Opacity" Value="0.55"/>
+                                    <Setter TargetName="btnBorder" Property="Background" Value="#450A0A"/>
+                                    <Setter Property="Foreground" Value="#CBD5E1"/>
+                                    <Setter Property="Cursor" Value="No"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -139,10 +129,11 @@
                 <TextBlock x:Name="txtLockoutTimer"
                            Text=""
                            FontSize="13"
-                           FontStyle="Italic"
-                           Foreground="#FCD34D"
+                           Foreground="#FDBA74"
                            TextAlignment="Center"
+                           TextWrapping="Wrap"
                            Margin="0,12,0,0"
+                           AutomationProperties.LiveSetting="Assertive"
                            Visibility="Collapsed"/>
             </StackPanel>
         </Border>

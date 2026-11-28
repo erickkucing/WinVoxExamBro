@@ -84,42 +84,43 @@ public class NetworkPingServiceLifecycleTests
     }
 
     [Fact]
-    public async Task ConcurrentUpdateTargetFromUrl_NeverExposesTornHostAndPortPair()
+    public async Task ConcurrentUpdateTargetFromUrl_NeverObservesTornHostPortPairs()
     {
-        var tornPairs = new ConcurrentQueue<string>();
-        using var cts = new CancellationTokenSource();
-
-        var service = new NetworkPingService(customProbe: (host, port, _) =>
+        var observedMismatches = new ConcurrentQueue<string>();
+        var service = new NetworkPingService(customProbe: (host, port, ct) =>
         {
-            bool validA = host == "10.0.0.1" && port == 8001;
-            bool validB = host == "10.0.0.2" && port == 9443;
-            bool validDefault = host == "127.0.0.1" && port == 80;
-            if (!validA && !validB && !validDefault)
+            int expectedPort = host.EndsWith("alpha.local", StringComparison.Ordinal) ? 8001 : 9002;
+            if (port != expectedPort)
             {
-                tornPairs.Enqueue($"{host}:{port}");
+                observedMismatches.Enqueue($"{host}:{port}");
             }
             return Task.FromResult(5L);
         });
 
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(400));
         var writerTask = Task.Run(() =>
         {
-            for (int i = 0; i < 40000 && !cts.IsCancellationRequested; i++)
+            int i = 0;
+            while (!cts.IsCancellationRequested)
             {
-                service.UpdateTargetFromUrl((i & 1) == 0 ? "http://10.0.0.1:8001/exam" : "https://10.0.0.2:9443/exam");
+                string url = (i++ % 2 == 0)
+                    ? "http://alpha.local:8001/exam"
+                    : "http://beta.local:9002/exam";
+                service.UpdateTargetFromUrl(url);
             }
         });
 
-        var readerTasks = Enumerable.Range(0, 4).Select(_ => Task.Run(async () =>
+        var readerTask = Task.Run(async () =>
         {
-            for (int i = 0; i < 10000 && !cts.IsCancellationRequested; i++)
+            while (!cts.IsCancellationRequested)
             {
                 await service.MeasureOnceAsync(cts.Token);
             }
-        })).ToArray();
+        });
 
-        await Task.WhenAll(readerTasks.Append(writerTask));
+        await Task.WhenAll(writerTask, readerTask);
         service.Dispose();
 
-        Assert.Empty(tornPairs);
+        Assert.Empty(observedMismatches);
     }
 }

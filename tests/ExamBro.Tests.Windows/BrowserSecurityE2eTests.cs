@@ -5,7 +5,9 @@ using System.Runtime.Versioning;
 using ExamBro.Core;
 using ExamBro.Exam.Services;
 using ExamBro.Tests.Windows.Fixtures;
+using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Input;
+using FlaUI.Core.WindowsAPI;
 
 namespace ExamBro.Tests.Windows;
 
@@ -276,6 +278,148 @@ public sealed class BrowserSecurityE2eTests
         catch
         {
             ExamAppHost.CaptureFailureScreenshot("E2E12_H17_ExitDialogLockout");
+            throw;
+        }
+    }
+
+    [Fact]
+    public async Task E2E13_ReopenedFinishedSession_KeepsTopBarActiveAndHidesCompletionOverlay()
+    {
+        await using var server = await FakeCbtServer.StartAsync();
+        using var host = new ExamAppHost(preferDebug: true);
+
+        var cfg = ExamAppHost.CreateE2eConfig($"{server.BaseUrl}/exam/workspace/e2e-13", kioskMode: false, devSafeAllowedInRelease: true);
+        host.Configure(embeddedConfig: cfg);
+
+        try
+        {
+            host.Launch(devSafe: true, enableCdp: true);
+            await WaitForRequestAsync(server, "/exam/workspace/e2e-13", TimeSpan.FromSeconds(25));
+
+            await using var cdp = await CdpClient.ConnectAsync(host.CdpPort!.Value, TimeSpan.FromSeconds(20));
+
+            // Finish exam -> navigate to /exam/finished/e2e-13
+            await cdp.NavigateAsync($"{server.BaseUrl}/exam/finished/e2e-13");
+            await WaitForRequestAsync(server, "/exam/finished/e2e-13", TimeSpan.FromSeconds(15));
+            await Task.Delay(500);
+
+            var mainWin = await host.WaitForMainWindowAsync(TimeSpan.FromSeconds(10));
+            var topBar = mainWin.FindFirstDescendant(cf => cf.ByAutomationId("topToolbar"));
+            var reloadBtn = mainWin.FindFirstDescendant(cf => cf.ByName("Muat Ulang"));
+            Assert.NotNull(topBar);
+            Assert.NotNull(reloadBtn);
+            Assert.True(topBar!.IsEnabled);
+            Assert.True(reloadBtn!.IsEnabled);
+            Assert.False(reloadBtn.IsOffscreen);
+
+            // Simulate proctor reopening session on CBT server -> /exam/finished/e2e-13 now redirects 302 to /exam/workspace/e2e-13
+            server.ReopenedSessions["e2e-13"] = true;
+            int prevWorkspaceHits = server.RequestedPaths.Count(p => p.Contains("/exam/workspace/e2e-13", StringComparison.OrdinalIgnoreCase));
+
+            // Clicking Reload on the Top Bar must succeed cleanly (proving Top Bar is never covered or disabled!)
+            reloadBtn.Click();
+
+            var deadline = DateTime.UtcNow.AddSeconds(15);
+            while (DateTime.UtcNow < deadline)
+            {
+                int nowHits = server.RequestedPaths.Count(p => p.Contains("/exam/workspace/e2e-13", StringComparison.OrdinalIgnoreCase));
+                if (nowHits > prevWorkspaceHits)
+                {
+                    break;
+                }
+                await Task.Delay(200);
+            }
+
+            Assert.True(server.RequestedPaths.Count(p => p.Contains("/exam/workspace/e2e-13", StringComparison.OrdinalIgnoreCase)) > prevWorkspaceHits,
+                "Clicking Reload on Top Bar did not reopen /exam/workspace/e2e-13.");
+
+            await Task.Delay(400);
+            var completionOverlay = mainWin.FindFirstDescendant(cf => cf.ByAutomationId("completionOverlay"));
+            Assert.True(completionOverlay == null || completionOverlay.IsOffscreen,
+                "CompletionOverlay remained visible after navigating back to reopened workspace.");
+            Assert.True(topBar.IsEnabled);
+        }
+        catch
+        {
+            ExamAppHost.CaptureFailureScreenshot("E2E13_ReopenedTopBar");
+            throw;
+        }
+    }
+
+    [Fact]
+    public async Task E2E14_ExitDialog_SymmetricCursorPasswordToggleAndCancelEscWork()
+    {
+        await using var server = await FakeCbtServer.StartAsync();
+        using var host = new ExamAppHost(preferDebug: false);
+
+        var cfg = ExamAppHost.CreateE2eConfig($"{server.BaseUrl}/exam/workspace/e2e-14", kioskMode: false, devSafeAllowedInRelease: true);
+        host.Configure(embeddedConfig: cfg);
+
+        try
+        {
+            host.Launch(devSafe: true);
+            await WaitForRequestAsync(server, "/exam/workspace/e2e-14", TimeSpan.FromSeconds(25));
+            var mainWin = await host.WaitForMainWindowAsync(TimeSpan.FromSeconds(15));
+            IntPtr hwnd = new IntPtr(mainWin.Properties.NativeWindowHandle.Value);
+
+            var automation = host.AttachUia();
+            SendMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+            await Task.Delay(400);
+
+            var dlg = automation.GetDesktop().FindFirstChild(cf => cf.ByName("Konfirmasi Keluar Ujian"));
+            Assert.NotNull(dlg);
+
+            var pwdBox = dlg!.FindFirstDescendant(cf => cf.ByAutomationId("pwdExit"));
+            var toggleBtn = dlg.FindFirstDescendant(cf => cf.ByAutomationId("btnTogglePassword"));
+            Assert.NotNull(pwdBox);
+            Assert.NotNull(toggleBtn);
+
+            pwdBox!.Focus();
+            Keyboard.Type("TestProctor#2026");
+
+            var pwdRect = pwdBox.BoundingRectangle;
+
+            // Reveal password -> revealed TextBox must match vertically and hold full plaintext
+            toggleBtn!.Click();
+            await Task.Delay(150);
+            var revealBox = dlg.FindFirstDescendant(cf => cf.ByAutomationId("txtExitPasswordVisible"));
+            Assert.NotNull(revealBox);
+            Assert.False(revealBox!.IsOffscreen);
+            Assert.Equal("TestProctor#2026", revealBox.AsTextBox().Text);
+
+            var revealRect = revealBox.BoundingRectangle;
+            Assert.InRange(Math.Abs(pwdRect.Top - revealRect.Top), 0, 2);
+            Assert.InRange(Math.Abs(pwdRect.Height - revealRect.Height), 0, 2);
+
+            // Toggle back -> masked PasswordBox active again and Confirm exits cleanly
+            toggleBtn.Click();
+            await Task.Delay(150);
+
+            // Escape (IsCancel) closes ExitDialog safely without terminating ExamWindow
+            Keyboard.Type(VirtualKeyShort.ESCAPE);
+            await Task.Delay(300);
+            Assert.False(host.Process!.HasExited);
+
+            // Reopen, enter password, and confirm exit cleanly
+            SendMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+            await Task.Delay(400);
+            var dlgReopened = automation.GetDesktop().FindFirstChild(cf => cf.ByName("Konfirmasi Keluar Ujian"));
+            Assert.NotNull(dlgReopened);
+            var pwdReopened = dlgReopened!.FindFirstDescendant(cf => cf.ByAutomationId("pwdExit"));
+            var btnConfirm = dlgReopened.FindFirstDescendant(cf => cf.ByAutomationId("btnConfirmExit"));
+            Assert.NotNull(pwdReopened);
+            Assert.NotNull(btnConfirm);
+            pwdReopened!.Focus();
+            Keyboard.Type("TestProctor#2026");
+            btnConfirm!.Click();
+
+            bool exited = host.Process!.WaitForExit(15_000);
+            Assert.True(exited, "ExitDialog did not authorize exit after password toggle round-trip.");
+            Assert.Equal(0, host.Process.ExitCode);
+        }
+        catch
+        {
+            ExamAppHost.CaptureFailureScreenshot("E2E14_ExitDialogToggle");
             throw;
         }
     }

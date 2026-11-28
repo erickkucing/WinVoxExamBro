@@ -55,6 +55,7 @@ public partial class PreFlightDialog : Window
     private readonly ObservableCollection<PreFlightCheckItem> _checks = new();
     private DispatcherTimer? _autoProceedTimer;
     private volatile bool _isClosed;
+    private int _checkGeneration;
 
     private static readonly Brush SuccessColor = new SolidColorBrush(Color.FromRgb(22, 163, 74));
     private static readonly Brush FailureColor = new SolidColorBrush(Color.FromRgb(220, 38, 38));
@@ -109,6 +110,8 @@ public partial class PreFlightDialog : Window
     {
         if (_isClosed) return;
 
+        int myGeneration = Interlocked.Increment(ref _checkGeneration);
+
         _autoProceedTimer?.Stop();
         _autoProceedTimer = null;
 
@@ -140,9 +143,11 @@ public partial class PreFlightDialog : Window
 
         bool allPassed = true;
 
+        bool IsStaleRun() => _isClosed || Volatile.Read(ref _checkGeneration) != myGeneration;
+
         // 1. Administrator Elevation Check
         await Task.Delay(100);
-        if (_isClosed) return;
+        if (IsStaleRun()) return;
         bool isAdmin = EnvironmentDetector.IsElevatedAdministrator();
         if (isAdmin)
         {
@@ -158,7 +163,7 @@ public partial class PreFlightDialog : Window
 
         // 2. Microsoft Edge WebView2 Runtime Check
         await Task.Delay(100);
-        if (_isClosed) return;
+        if (IsStaleRun()) return;
         try
         {
             string wvVersion = Microsoft.Web.WebView2.Core.CoreWebView2Environment.GetAvailableBrowserVersionString();
@@ -172,7 +177,7 @@ public partial class PreFlightDialog : Window
 
         // 3. Network Check (Localhost & 100% Offline Ready)
         await Task.Delay(120);
-        if (_isClosed) return;
+        if (IsStaleRun()) return;
         bool isLocalhostServer = false;
         try
         {
@@ -199,7 +204,7 @@ public partial class PreFlightDialog : Window
 
         // 3. Virtual Machine Check (Respects settings toggle)
         await Task.Delay(150);
-        if (_isClosed) return;
+        if (IsStaleRun()) return;
         if (!_config.Security.BlockVirtualMachine)
         {
             MarkPassed(itemVm, "Pemeriksaan VM dinonaktifkan di pengaturan (Diizinkan).");
@@ -224,7 +229,7 @@ public partial class PreFlightDialog : Window
 
         // 4. Remote Desktop Session Check
         await Task.Delay(120);
-        if (_isClosed) return;
+        if (IsStaleRun()) return;
         var (isRdp, rdpReason) = EnvironmentDetector.DetectRemoteSession();
         if (!isRdp)
         {
@@ -242,7 +247,7 @@ public partial class PreFlightDialog : Window
 
         // 5. Debugger Check
         await Task.Delay(100);
-        if (_isClosed) return;
+        if (IsStaleRun()) return;
         var (isDebugger, debuggerReason) = EnvironmentDetector.DetectDebugger();
         if (!isDebugger)
         {
@@ -260,7 +265,7 @@ public partial class PreFlightDialog : Window
 
         // 6. Process Blacklist Check
         await Task.Delay(150);
-        if (_isClosed) return;
+        if (IsStaleRun()) return;
         using var procMonitor = new ProcessMonitorService(_config);
         var offendingProcs = procMonitor.CheckRunningBlacklist();
         if (offendingProcs.Count == 0)
@@ -282,7 +287,7 @@ public partial class PreFlightDialog : Window
 
         // 7. Multi-Monitor Configuration Check
         await Task.Delay(100);
-        if (_isClosed) return;
+        if (IsStaleRun()) return;
         var monitors = ScreenProtectionService.EnumerateMonitors();
         if (monitors.Count <= 1 || _config.Security.MultiMonitor != MultiMonitorPolicy.Block)
         {
@@ -294,7 +299,7 @@ public partial class PreFlightDialog : Window
             allPassed = false;
         }
 
-        if (_isClosed) return;
+        if (IsStaleRun()) return;
 
         btnRetry.IsEnabled = true;
 
